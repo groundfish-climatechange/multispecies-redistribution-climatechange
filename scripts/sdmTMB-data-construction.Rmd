@@ -1,0 +1,555 @@
+---
+title: "Build Data for sdmTMB groundfish modelling"
+author: "Owen Liu"
+date: "6/8/2021"
+output:
+  # pdf_document:
+  #   toc: yes
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+# remotes::install_github("pbs-assess/sdmTMB",ref="stacking")
+library(sdmTMB)
+library(terra)
+library(raster)
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(here)
+library(rnaturalearth)
+# vista is Eric Ward's library for looking at outputs
+library(vista)
+library(cowplot)
+library(RANN)
+library(furrr)
+library(future)
+library(tictoc)
+
+knitr::opts_chunk$set(echo = TRUE)
+options(dplyr.summarise.inform=FALSE)
+```
+
+```{r plottheme}
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+```{r}
+# spatial background map
+# load west cost land for mapping
+coast <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>%
+  st_transform(crs = "+proj=utm +zone=10 +datum=WGS84 +units=km")
+
+```
+
+# Purpose
+
+Prepare species and environmental covariate data for use in `sdmTMB` model fitting and for species distribution projections.
+
+*Note: many of these code chunks are set to `eval=FALSE` meaning that they will not run in full when knitting or sourcing this document. This is because some of the data construction is very time-consuming and often only needs to be done once. If a user wants to change something about how the data are constructed, they should run the relevant code chunks in this document manually. If not, then this script loads all of the pre-constructed data at the end, such that another script sourcing this one will attain the cleaned and organized data.
+
+*Note 2: The organizing of the raw ROMS data is documented in the `ocean-models` repo, including the calculations of 30-day running lags, and the joining of projected ROMS-ESM outputs for the projection dataset. If needed, those functions and raw data could be moved into this repo as well.
+
+# Data for Model Fitting
+
+## Import Data
+
+### Trawl Data
+
+Trawl data, including a matching key to link to ROMS data. The hindcast ROMS data has values for all trawl survey locations for all times, but we just want the values matched to the actual trawl survey times/dates.
+
+```{r,eval=F}
+trawl <- read_rds(here('data','nwfsc_trawl_data.rds')) %>% 
+  # convert date from character to date
+  mutate(date=as_date(date))
+# roms time refernce
+roms_time <- read_rds(here('data','roms_time_date_reference.rds'))
+trawl_locs <- read_rds(here::here('data','trawl','trawlID.rds')) %>% 
+  # add a dummy indicator of a "real" trawl survey location in time/space
+  mutate(date=as_datetime(trawl_time,origin="1900-01-01")) %>%
+  mutate(date=as_date(date)) %>%
+  mutate(realTrawl=1) %>% 
+  # join the roms_time reference
+  left_join(roms_time) %>% 
+  # select the variable we'll use to match
+  dplyr::select(station,date,time,lon_trawl,lat_trawl,depth_trawl,realTrawl)
+
+trawl <- trawl %>% 
+  left_join(trawl_locs,by=c("date"="date","longitude_dd"="lon_trawl","latitude_dd"="lat_trawl","depth"="depth_trawl"))
+```
+
+Filter the trawl survey data to fit within the time frame for which we have ROMS hindcast data (1980-2010)
+
+```{r,eval=F}
+trawl <- trawl %>%
+  filter(realTrawl==1) %>% 
+  dplyr::select(-realTrawl) %>% 
+  # rename time to something more useful
+  rename(roms_hindcast_day=time)
+glimpse(trawl)
+```
+
+### ROMS Data
+
+Hindcast ROMS data matched to trawl survey locations and times
+
+```{r,eval=F}
+roms <- read_rds(here::here('data','joined_30d_lagged_t_o.rds')) %>%
+  # join the trawl_locs and filter by actual trawl locations and times
+  left_join(trawl_locs) %>% 
+  filter(realTrawl==1) %>% 
+  dplyr::select(-realTrawl) %>% 
+  # rename time to something more useful
+  rename(roms_hindcast_day=time)
+glimpse(roms)
+```
+
+### Substrate Data
+
+Here is the substrate data that Blake Feist matched to individual trawl tows.
+
+```{r,eval=F}
+substrate <- read_rds(here('data','substrate','substrate_by_trawlID.rds'))
+glimpse(substrate)
+```
+
+Look at the form of these data
+
+```{r,eval=F}
+glimpse(trawl)
+glimpse(roms)
+glimpse(substrate)
+```
+
+For the ROMS data (for now), we are using modelled temperature and oxygen, lagged 30 days from each trawl survey location and time.
+
+```{r,eval=F}
+roms_thin <- roms %>% 
+  dplyr::select(station,lon_trawl,lat_trawl,depth_trawl,mean_temp_roms_30,mean_oxygen_roms_30)
+```
+
+## Join Datasets
+
+### Join Trawl and ROMS
+
+Join the two datasets together, such that we have the appropriately-matched ROMS outputs
+
+```{r,eval=F}
+trawl_roms <- trawl %>% left_join(roms,by = c("date", "station", "roms_hindcast_day")) %>% 
+  #clean up some columns
+  dplyr::select(date,trawl_id,station,lon_trawl,lat_trawl,depth_trawl,mean_temp_roms_30,mean_oxygen_roms_30,species,cpue_kg_km2) %>% 
+  # drop any rows with NAs
+  drop_na()
+```
+
+```{r}
+  # test <- trawl %>% left_join(roms,by = c("date", "station", "roms_hindcast_day")) %>% 
+  #   #clean up some columns
+  #   dplyr::select(date,trawl_id,station,lon_trawl,lat_trawl,depth_trawl,temp_roms,oxygen_roms,mean_temp_roms_30,mean_oxygen_roms_30,species,cpue_kg_km2) %>% 
+  #   # drop any rows with NAs
+  #   drop_na()
+```
+
+### Join Trawl and Substrate
+
+Join the substrate data by trawl ID number.
+
+```{r,eval=F}
+substrate_thin <- substrate %>% 
+  dplyr::select(TRAWL_ID,prop_hard_mixed)
+trawl_roms <- trawl_roms %>% 
+  left_join(substrate_thin,by=c('trawl_id'="TRAWL_ID")) %>% 
+  drop_na()
+```
+
+## Prepare Data for sdmTMB
+
+Convert the trawl spatial data to UTM. 
+
+```{r,eval=F}
+# convert to UTM
+trawl_roms_utm <- trawl_roms %>%
+  # convert to sf object
+  st_as_sf(coords=c('lon_trawl','lat_trawl'),crs=4326) %>%
+  # transform to UTM zone 10
+  st_transform(crs = "+proj=utm +zone=10 +datum=WGS84 +units=km") %>%
+  # add new coords as vars
+  mutate(latitude = sf::st_coordinates(.)[,2],
+         longitude = sf::st_coordinates(.)[,1]) %>%
+  # convert back to normal df
+  st_set_geometry(NULL)
+```
+
+We can save this version of the data so we do not have to run the join every time.
+
+```{r,eval=F}
+write_rds(trawl_roms_utm,here::here('data','trawl_roms_joined.rds'))
+```
+
+# Data for Projection
+
+The projected ROMS gridded data have been processed (`ocean-models` repository) into a tibble that includes the average value of bottom temperature and bottom oxygen for each year at each grid point, along with the average value of that environmental variable over the 30d leading up to July 31 (the midpoint of the trawl survey season) each year. These values are for each of 3 global climate models, making a total of 12 variables.
+
+## Projection Domain
+
+Define the spatial domain for SDM projection, using the overlap between the trawl survey extent and the ROMS model domain. This spatial domain was created by finding a convex hull of all trawl survey locations, then cropping it using a coastline.
+
+First, make a prediction grid based on the trawl survey grid.
+
+```{r,eval=F}
+# From Eric Ward 08/2021, modified by Owen Liu 
+# make prediction raster roughly from grid_cell centroids, given standard cell dimensions (here in meters, converted from nm)
+
+# read in the grid cell data from the survey design
+grid_cells = readxl::read_excel(here('data','grids',"Selection Set 2018 with Cell Corners.xlsx"))
+coordinates(grid_cells) <- c("Cent.Long", "Cent.Lat")
+proj4string(grid_cells) <- CRS("+proj=longlat +datum=WGS84")
+grid_cells <- spTransform(grid_cells, CRS("+proj=utm +zone=10 +datum=WGS84 +units=km"))
+
+# make prediction raster roughly from grid_cell centroids, given standard cell dimensions (here in meters, converted from nm)
+
+# CHANGED TO KM
+predict_raster = raster::raster(grid_cells, resolution = c(2.778,3.704), vals = NULL)
+
+## load custom bathymetry raster
+bathy_hiRes <- raster::raster(here('data','grids',"bathy_clipped"))
+
+# aggregate and project bathymetry to survey grid cells, the absolute minimum resolution of the prediction grid
+bathy_raster <- raster::projectRaster(bathy_hiRes, predict_raster, crs = CRS("+proj=utm +zone=10 +datum=WGS84 +units=km"), method="bilinear")
+# load Cowcod Conservation Areas, not included in trawl survey, and reproject
+CCA = rgdal::readOGR(here('data','grids','kv299cy7357.shp'))
+CCA = sp::spTransform(CCA, sp::CRS("+proj=utm +zone=10 +datum=WGS84 +units=km"))
+# mask CCA from bathymetry raster used for prediction
+bathy_raster = suppressWarnings(raster::mask(bathy_raster, CCA, inverse = TRUE))
+# create matrix of point data with coordinates and depth from raster
+wc_grid <- as.data.frame(raster::rasterToPoints(bathy_raster)) # rough area of survey extent is 123497km^2, from 2.778*3.704 (cell res) * nrow(wc_grid) = 12002 
+colnames(wc_grid) = c("X", "Y", "depth")
+
+# scale covariates
+wc_grid$log_depth_scaled <- (log(wc_grid$depth * -1) - mean(log(haul$depth_hi_prec_m))) / sd(log(haul$depth_hi_prec_m))
+wc_grid$log_depth_scaled2 <- wc_grid$log_depth_scaled ^ 2
+```
+
+```{r,eval=F}
+# isobaths for mapping
+# 
+# bathy_hiRes_crop <- bathy_hiRes %>% rast() %>% 
+#   # decimeters to meters
+#   "*"(.1)
+# isobaths <- as.contour(bathy_hiRes_crop,levels=c(-1300)) %>% 
+#   st_as_sf() %>% 
+#   st_transform(st_crs(coast))
+
+# compare to newly-acquired data from Office of Coastal Management
+# isobaths2 <- read_sf(here('data','grids','ocm_bathy','west_coast_bath_contours_geo.shp')) %>% 
+#   st_transform(st_crs(isobaths)) %>% 
+#   filter(ISOBATH_M %in% c(-1300,-200))
+
+# bathybbox <- st_bbox(isobaths)
+# ggplot()+geom_sf(data=coast,fill='gray90')+
+#   geom_sf(data=isobaths,col='black')+
+#   # geom_sf(data=isobaths2,col='red')+
+#   coord_sf(xlim=c(bathybbox[1],bathybbox[3]),ylim=c(bathybbox[2],bathybbox[4]))+
+#   labs(col="Depth (m)")
+# 
+# ggplot()+geom_sf(data=coast,fill='gray90')+
+#   # geom_sf(data=isobaths,col='black')+
+#   geom_sf(data=isobaths2,col='red')+
+#   coord_sf(xlim=c(bathybbox[1],bathybbox[3]),ylim=c(bathybbox[2],bathybbox[4]))+
+#   labs(col="Depth (m)")
+
+# why does this look SO off?
+# try extracting? maybe a units mismatch
+# isobath_1300 <- isobaths2 %>% filter(ISOBATH_M==-1300) %>% st_transform(4326)
+# isobath_extract <- terra::extract(rast(bathy_hiRes),vect(isobath_1300)) %>% 
+#   drop_na()
+# isobath_extract %>% ggplot(aes(bathy_clipped))+geom_density()
+# oh god, I think the original bathymetry was in decimenters
+```
+
+
+```{r,eval=F}
+readr::write_rds(x = isobaths, file=here('data','grids',"isobaths200_1300.rds"))
+readr::write_rds(x = wc_grid, file=here('data','grids',"wc_grid.rds"))
+```
+
+Use the grid to define the prediction domain
+
+```{r,eval=F}
+# ROMS extent
+roms_bbox <- read_rds(here::here('data','roms_latlon_key.rds')) %>% 
+  mutate(roms_cell=row_number()) %>% 
+  st_as_sf(coords=c('lon','lat'),crs=4326) %>%
+  st_bbox() %>% 
+  st_as_sfc() %>% 
+  st_transform(crs = "+proj=utm +zone=10 +datum=WGS84 +units=km")
+
+# bounding box for trawl grid
+gr <- read_rds(here::here('data','grids','wc_grid.rds'))
+gr_sp <- gr %>% st_as_sf(coords=c('X','Y'),crs="+proj=utm +zone=10 +datum=WGS84 +units=km") %>%
+  summarise() %>%
+  st_convex_hull()
+
+# cowcod conservation areas
+CCA = read_sf(here('data','grids','kv299cy7357.shp')) %>% st_transform("+proj=utm +zone=10 +datum=WGS84 +units=km") %>% 
+  st_union()
+
+# crop CCA out of trawl bounding box
+trawl_bbox <- gr_sp %>% st_difference(CCA)
+
+# to make the correct domain, crop trawl to coastline
+projection_extent <- trawl_bbox %>% 
+  st_difference(coast %>% summarise())
+
+# save the outline
+write_rds(projection_extent,here::here('data','cropped_domain_for_projected_sdms.rds'))
+
+write_sf(projection_extent,here::here('data','cropped_domain_for_projected_sdms.shp'))
+# ggplot()+geom_sf(data=projection_extent,fill='lightblue')+geom_sf(data=coast)
+```
+
+```{r,eval=F}
+# Visualize domain
+# uncropped
+ggplot()+
+  geom_sf(data=coast)+
+  geom_sf(data=roms_bbox,fill='blue',alpha=0.5)+
+  geom_sf(data=trawl_bbox,fill='red',alpha=0.5)+
+  labs(title="Trawl and ROMS extents")
+
+# cropped
+ggplot()+
+  geom_sf(data=coast)+
+  geom_sf(data=projection_extent,fill='red',alpha=0.5)+
+  labs(title="Domain for Projected SDMs")
+```
+
+## ROMS for Projection
+
+```{r,eval=FALSE}
+# only run these chunks if you need to reproduce the projection roms (UTM, clipped to projection extent) data
+roms <- read_rds(here::here('data','mean_30dmean_bt_ox_allmodels_1980_2100.rds'))
+glimpse(roms)
+```
+
+Calculate latitude and longitude in UTM coordinates, which is what the models were fitted with. NOTE: this is also where we crop these ROMS data to the designated SDM projection domain (see above)
+
+```{r, eval=FALSE}
+roms <- roms %>% 
+  # convert to sf object
+  st_as_sf(coords=c('lon','lat'),crs=4326,remove=F) %>%
+  # transform to UTM zone 10
+  st_transform(crs = "+proj=utm +zone=10 +datum=WGS84 +units=km") %>%
+  # crop to SDM extent
+  st_intersection(projection_extent) %>%
+  # add new coords as vars
+  mutate(latitude = sf::st_coordinates(.)[,2],
+         longitude = sf::st_coordinates(.)[,1]) %>%
+  # convert back to normal df
+  st_set_geometry(NULL)
+```
+
+```{r,eval=F}
+write_rds(roms,here('data','roms_for_sdm_projection.rds'))
+```
+
+## ROMS Distance to Shore
+
+For some output plots, we want to calculate how far each ROMS cell is from the coastline.
+
+```{r, eval=F}
+roms_xy <- roms %>% 
+  distinct(latitude,longitude) %>%
+  st_as_sf(coords=c('longitude','latitude'),crs=st_crs(coast),remove=F)
+# roms_xy %>% ggplot()+geom_sf()
+
+coastsumm <- coast %>% summarise()
+roms_coast_dist <- roms_xy %>% st_distance(coastsumm)
+
+roms_dist_to_coast <- roms_xy %>% 
+  mutate(km_to_coast=as.numeric(roms_coast_dist)) %>%
+  st_set_geometry(NULL)
+roms_dist <- roms %>% left_join(roms_dist_to_coast,by=c('longitude','latitude'))
+
+write_rds(roms_dist_to_coast,here('data','roms_distance_to_shore.rds'))
+```
+
+# Load Constructed Data
+
+```{r}
+trawl_roms_utm <- read_rds(here::here('data','trawl_roms_joined.rds'))
+```
+
+```{r}
+# pre-processed and clipped to projection extent
+roms <- read_rds(here('data','roms_for_sdm_projection.rds'))
+roms_area <- read_rds(here('data','roms_cell_area_km2.rds'))
+```
+
+```{r}
+projection_extent <- read_rds(here::here('data','cropped_domain_for_projected_sdms.rds'))
+```
+
+```{r}
+isobaths <- read_sf(here('data','grids','ocm_bathy','west_coast_bath_contours_geo.shp')) %>% 
+  st_transform(st_crs(coast)) %>% 
+  filter(ISOBATH_M %in% c(-1300,-200))
+```
+
+
+```{r}
+roms_dist_to_coast <- read_rds(here::here('data','roms_distance_to_shore.rds'))
+```
+
+```{r}
+hab <- read_rds(here('data','substrate','prop_hard_by_ROMS_cell.rds'))
+# the roms grid, to match depth and habitat values to lat/lon (from process_substrate_data.Rmd)
+roms_ll <- read_rds(here::here('data','roms_latlon_key_topleft_start.rds')) %>% 
+  mutate(roms_cell=row_number())
+
+hab <- hab %>% 
+  left_join(roms_ll,by="roms_cell") %>% 
+  dplyr::select(lon,lat,prop_hard,depth_m) %>% 
+  rename(prop_hard_mixed=prop_hard)
+```
+
+## DTS Trawl Footprints
+
+```{r, eval=F}
+# DTS relative importance
+dts_imp <- read_csv(here('data','DTS footprints','dts_imp_yr_1987-2019.csv'))
+
+dts_imp_plot <- dts_imp %>% 
+  group_by(IOPAC) %>%
+  summarise(mean_frac_land=mean(dts_frac_landing)) %>%
+  ggplot(aes(fct_reorder(IOPAC,mean_frac_land,.desc = T),mean_frac_land))+
+  geom_col()+
+  labs(x='Year',y="Mean Landings Fraction")+
+  geom_hline(yintercept=0.6,color="red",linetype=2)+
+  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1))
+
+dts_imp_plot
+
+dts_mean_landings_plot <- dts_imp %>% 
+  group_by(IOPAC) %>%
+  summarise(mean_land=mean(total_dts_kg)) %>%
+  ggplot(aes(fct_reorder(IOPAC,mean_land,.desc = T),mean_land/1000))+
+  geom_col()+
+  labs(x='Year',y="Mean DTS Landings (MT)")+
+  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1))
+
+dts_mean_landings_plot
+
+dts_imp_fig <- plot_grid(dts_imp_plot,dts_mean_landings_plot,nrow=2,labels='auto')
+ggsave(here('model output','dts paper','dts_importance_port_group.png'),dts_imp_fig,w=6,h=8)
+
+# dts_imp_ts_plot <- dts_imp %>% 
+#   # group_by(IOPAC) %>% 
+#   # mutate(mean_frac_land=mean(dts_frac_landing)) %>% 
+#   ggplot(aes(RYEAR,dts_frac_landing))+
+#   geom_line()+
+#   facet_wrap(~IOPAC)+
+#   labs(x='Year',y="Landings Fraction")+
+#   geom_hline(yintercept=0.6,color="red",linetype=2)+
+#   theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1))
+# 
+# dts_imp_ts_plot
+# 
+# # years above 50% importance
+# dts_imp
+# # ggsave(here('model output','dts paper','dts_importance_port_group.png'),dts_imp_plot,w=6,h=5)
+# 
+# dts_total_landings_ts_plot <- dts_imp %>% 
+#   ggplot(aes(RYEAR,total_dts_kg/1000))+
+#   geom_line()+
+#   facet_wrap(~IOPAC)+
+#   labs(x='Year',y="Total DTS Landings (MT)")+
+#   theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1))
+# dts_total_landings_ts_plot
+# 
+# dts_imp_plot2 <- dts_imp %>% 
+#   ggplot(aes(fct_reorder(IOPAC,mean_frac_trips,.desc = T),mean_frac_trips))+
+#   geom_col()+
+#   labs(x='Port Group',y="Mean Trips Fraction")+
+#   theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1))
+# # dts_imp_plot2
+# 
+# # dts rank order table
+# dts_fp_ranks <- dts_imp %>% 
+#   mutate(land_rank=dense_rank(desc(mean_frac_land)),
+#          trips_rank=dense_rank(desc(mean_frac_trips))) %>% 
+#   mutate(rankssum=land_rank+trips_rank)
+```
+For now (August 2022) choose all six ports whose mean share of DTS relative to all groundfish FMP landings is >60% (Brookings, Crescent City, Eureka, Fort Bragg, Morro Bay, Coos Bay)
+
+```{r,eval=F,fig.height=6,fig.width=8}
+# Trawl footprints for DTS species
+footprints <- read_sf(here('data','DTS footprints','DTS_footprints_combined.shp')) %>% 
+  st_transform(st_crs(projection_extent)) %>% 
+  filter(port_group %in% c("Astoria","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay", "Coos Bay")) %>% 
+  mutate(port_name=factor(port_group,levels=c("Astoria","Coos Bay","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay")))
+
+bb <- st_bbox(footprints)
+ggplot()+
+  geom_sf(data=coast,fill='grey80')+
+  geom_sf(data=footprints,aes(fill=port_name),alpha=0.6)+
+  xlim(bb[1],bb[3]+250)+ylim(bb[2],bb[4])+
+  scale_fill_npg()+
+  scale_color_npg()+
+  # coord_sf(datum=NA)+
+  # theme_void()+
+  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1),
+        legend.position=c(0.7,0.5))+
+  scale_fill_discrete(name="Port Group")
+
+port_match <- tibble(port_name=c("Fort Bragg","Coos Bay","Astoria","Eureka","Morro Bay","North Puget Sound","Brookings","Crescent City")) %>%
+  mutate(port_code=c("BRG","COS","AST","ERK","MRO","ANA","BRK","CRS"))
+
+port_coords <- read_csv(here('data','port_coords.csv'),show_col_types = F) %>% 
+  st_as_sf(coords=c("Lon","Lat"),crs=4326) %>% 
+  st_transform(st_crs(projection_extent)) %>% 
+  left_join(port_match) %>% 
+  filter(port_name%in% unique(footprints$port_name)) %>% 
+  mutate(port_name=factor(port_name,levels=c("Astoria","Coos Bay","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay")))
+rm(port_match)
+
+roms_ports_match <- roms %>% 
+  distinct(latitude,longitude) %>% 
+  st_as_sf(coords=c("longitude","latitude"),crs="+proj=utm +zone=10 +datum=WGS84 +units=km",remove=F) %>% 
+  st_join(footprints) %>% 
+  st_set_geometry(NULL) %>% 
+  drop_na() %>% 
+  dplyr::select(latitude,longitude,port_group,port_name)
+
+# footprint distance to coast
+fp_dtc <- roms_ports_match %>% 
+  left_join(roms_dist_to_coast) %>% 
+  group_by(port_name) %>% 
+  summarise(dtc=mean(km_to_coast))
+```
+
+## DTS Landings and Value
+
+```{r}
+v <- read_csv(here('data','dts_landings.csv'),show_col_types = F) %>% 
+  rename(name=`NMFS Name`) %>% 
+  mutate(Year=as.integer(Year)) %>%
+  mutate(lab=case_when(
+    name=="SABLEFISH" ~ "Sablefish",
+    name=="SOLE, DOVER" ~ "Dover Sole",
+    name=="THORNYHEAD, LONGSPINE" ~ "Longspine",
+    name=="THORNYHEAD, SHORTSPINE" ~ "Shortspine"
+  )) %>% 
+  mutate(lab=factor(lab,levels=c("Dover Sole","Sablefish","Shortspine","Longspine")))
+```
+
