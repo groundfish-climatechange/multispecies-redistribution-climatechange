@@ -8,7 +8,9 @@ output:
     toc_float: true
 ---
 
-# Required packages
+# Purpose
+
+This script represents the main analysis and figure creation for the manuscript, "Species redistribution creates unequal outcomes for multispecies fisheries under projected climate change." Users can reproduce the analysis using the code blocks below, including figure creation. Any custom functions (e.g., any functions not directly sourced from the loaded R packages) are provided in `sdmTMB-model-functions.Rmd`. That script is sourced here.
 
 ```{r setup, include=FALSE}
 # devtools::install_github("pbs-assess/sdmTMB")
@@ -37,7 +39,7 @@ options(dplyr.summarise.inform=FALSE)
 ```
 
 ```{r}
-# ggplot theme
+# set ggplot theme for plotting
 plot_theme <-   theme_minimal()+
   theme(text=element_text(family="sans",size=12,color="black"),
         legend.text = element_text(size=10),
@@ -48,7 +50,85 @@ theme_set(plot_theme)
 pal4 <- viridis_pal(option="A",begin=0.2,end=0.8)(4)
 ```
 
-Load functions and data used for models. This command sources code and data from the `sdmTMB model functions` and `sdmTMB data construction` scripts.
+*A note on processing time: the species distribution models and other calculations in this analysis are complex, and can take a moderate amount of time to run---individual function calls can require a few minutes each (but not hours). To facilitate modularity in the code, we have included some saving and loading of files (usually `.rds` generic R data files). The point of these lines of code is, once the main models have been run once and the data files produced and saved, to provide the user with a way to interact with the faster parts of the code (e.g., plotting) without having to re-run the slower parts each time.*
+
+# Load Data
+
+Load the data for use in species distribution modeling and figure creation. The most raw versions of these data, and the code used to clean and organize them, are available from the authors upon request. One reason for this is that many of the raw data files (trawl survey data, ROMS oceanographic data) are very large before they are cleaned and summarized, and thus challenging to host on GitHub. Some data, particularly for creating the fishing footprints, are subject to data restrictions related to confidentiality, and were obtained by the authors through specific data sharing and non-disclosure agreements. Regardless, the data provided here should be sufficient to reproduce the models and figures in the manuscript.
+
+```{r}
+# Joined NWFSC trawl survey data and processed and matched CCROMS data for bottom temperature and oxygen
+trawl_roms_utm <- read_rds(here::here('data','trawl_roms_joined.rds'))
+```
+
+```{r}
+# CCROMS oceaongraphic data, pre-processed and clipped to projection extent
+roms <- read_rds(here('data','roms_for_sdm_projection.rds'))
+
+# Area of CCROMS cells
+roms_area <- read_rds(here('data','roms_cell_area_km2.rds'))
+
+# Latitude/longitude key for CCROMS grid cell centers
+roms_ll <- read_rds(here::here('data','roms_latlon_key_topleft_start.rds')) %>% 
+  mutate(roms_cell=row_number())
+
+# Distance from each CCROMS cell to the coastline
+roms_dist_to_coast <- read_rds(here::here('data','roms_distance_to_shore.rds'))
+```
+
+```{r}
+# Spatial extent of study area
+projection_extent <- read_rds(here::here('data','cropped_domain_for_projected_sdms.rds'))
+```
+
+```{r}
+# Trawl footprints for DTS species
+footprints <- read_sf(here('data','DTS_footprints_combined.shp')) %>% 
+  st_transform(st_crs(projection_extent)) %>% 
+  filter(port_group %in% c("Astoria","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay", "Coos Bay")) %>% 
+  mutate(port_name=factor(port_group,levels=c("Astoria","Coos Bay","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay")))
+port_match <- tibble(port_name=c("Fort Bragg","Coos Bay","Astoria","Eureka","Morro Bay","North Puget Sound","Brookings","Crescent City")) %>%
+  mutate(port_code=c("BRG","COS","AST","ERK","MRO","ANA","BRK","CRS"))
+
+# Coordinates of focal ports for each port group
+port_coords <- read_csv(here('data','port_coords.csv'),show_col_types = F) %>% 
+  st_as_sf(coords=c("Lon","Lat"),crs=4326) %>% 
+  st_transform(st_crs(projection_extent)) %>% 
+  left_join(port_match,by="port_code") %>% 
+  filter(port_name%in% unique(footprints$port_name)) %>% 
+  mutate(port_name=factor(port_name,levels=c("Astoria","Coos Bay","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay")))
+rm(port_match)
+
+# CCROMS cells spatially matched to fishing footprints
+roms_ports_match <- roms %>% 
+  distinct(latitude,longitude) %>% 
+  st_as_sf(coords=c("longitude","latitude"),crs="+proj=utm +zone=10 +datum=WGS84 +units=km",remove=F) %>% 
+  st_join(footprints) %>% 
+  st_set_geometry(NULL) %>% 
+  drop_na() %>% 
+  dplyr::select(latitude,longitude,port_group,port_name)
+```
+
+```{r}
+# DTS species landings and value, from PacFIN
+v <- read_csv(here('data','dts_landings.csv'),show_col_types = F) %>% 
+  rename(name=`NMFS Name`) %>% 
+  mutate(Year=as.integer(Year)) %>%
+  mutate(lab=case_when(
+    name=="SABLEFISH" ~ "Sablefish",
+    name=="SOLE, DOVER" ~ "Dover Sole",
+    name=="THORNYHEAD, LONGSPINE" ~ "Longspine",
+    name=="THORNYHEAD, SHORTSPINE" ~ "Shortspine"
+  )) %>% 
+  mutate(lab=factor(lab,levels=c("Dover Sole","Sablefish","Shortspine","Longspine")))
+
+# more detailed look relative to all other groundfish species, extracted by Sean Matson 12/2022
+dts_landings <- read_csv(here('data','pacfin_dts_landings_matson.csv'))
+```
+
+# Load Functions
+
+Load the custom functions used in both model fitting and figure creation.
 
 ```{r}
 rmarkdown::render(here::here('scripts','sdmTMB-model-functions.Rmd'),quiet=TRUE)
@@ -56,7 +136,7 @@ rmarkdown::render(here::here('scripts','sdmTMB-model-functions.Rmd'),quiet=TRUE)
 
 # Model Species
 
-Use `sdmTMB` to make ensemble models for each species of interest. (if these models have already been run, can just load them rather than running them again)
+Use `sdmTMB` to make ensemble models for each species of interest. If these models have already been run by the user and outputs saved, the cleaned and joined version of the outputs should be accessible by skipping down to the chunk labeled **Load**.
 
 ```{r,eval=F}
 spp_to_model <- c("dover sole","sablefish","shortspine thornyhead","longspine thornyhead")
@@ -70,20 +150,20 @@ Run models and save cross-validation model stacking weights. (note: this chunk i
 for(i in 1:length(spp_to_model)){
   s <- spp_to_model[i]
   m <- model_species(s,data = trawl_roms_utm,use_substrate = F)
-  write_rds(m,here::here('model output','dts paper',paste(s,'models.rds')))
+  write_rds(m,here::here('model output',paste(s,'models.rds')))
   print(paste(s,'models finished'))
 }
 ```
 
-## Make Ensemble Predictions
+## Make Predictions from Ensemble SDMs
 
-We project across all 3 ESMs, weighting each equally
+Project ensemble species distribution models onto the 3 CCROMS-ESMs (IPSL, GFDL, and Hadley). For each, run 100 simulations with varying draws from the joint precision matrix, as described in the manuscript Methods.
 
 ```{r,eval=T}
-dover_models <- read_rds(here::here('model output','dts paper','dover sole models.rds'))
-sable_models <- read_rds(here::here('model output','dts paper','sablefish models.rds'))
-ss_models <- read_rds(here::here('model output','dts paper','shortspine thornyhead models.rds'))
-ls_models <- read_rds(here::here('model output','dts paper','longspine thornyhead models.rds'))
+dover_models <- read_rds(here::here('model output','dover sole models.rds'))
+sable_models <- read_rds(here::here('model output','sablefish models.rds'))
+ss_models <- read_rds(here::here('model output','shortspine thornyhead models.rds'))
+ls_models <- read_rds(here::here('model output','longspine thornyhead models.rds'))
 ```
 
 IPSL
@@ -93,10 +173,10 @@ sable_ens_ipsl <- ensemble_predictions(sable_models,gcm='ipsl',nsims=100)
 ss_ens_ipsl <- ensemble_predictions(ss_models,gcm="ipsl",nsims=100)
 ls_ens_ipsl <- ensemble_predictions(ls_models,gcm='ipsl',nsims=100)
 
-write_rds(dover_ens_ipsl,here('model output','dts paper','dover_ensemble_preds_ipsl.rds'))
-write_rds(sable_ens_ipsl,here('model output','dts paper','sable_ensemble_preds_ipsl.rds'))
-write_rds(ss_ens_ipsl,here('model output','dts paper','ss_ensemble_preds_ipsl.rds'))
-write_rds(ls_ens_ipsl,here('model output','dts paper','ls_ensemble_preds_ipsl.rds'))
+# write_rds(dover_ens_ipsl,here('model output','dover_ensemble_preds_ipsl.rds'))
+# write_rds(sable_ens_ipsl,here('model output','sable_ensemble_preds_ipsl.rds'))
+# write_rds(ss_ens_ipsl,here('model output','ss_ensemble_preds_ipsl.rds'))
+# write_rds(ls_ens_ipsl,here('model output','ls_ensemble_preds_ipsl.rds'))
 ```
 
 GFDL
@@ -106,10 +186,10 @@ sable_ens_gfdl <- ensemble_predictions(sable_models,gcm='gfdl',nsims=100)
 ss_ens_gfdl <- ensemble_predictions(ss_models,gcm="gfdl",nsims=100)
 ls_ens_gfdl <- ensemble_predictions(ls_models,gcm='gfdl',nsims=100)
 
-write_rds(dover_ens_gfdl,here('model output','dts paper','dover_ensemble_preds_gfdl.rds'))
-write_rds(sable_ens_gfdl,here('model output','dts paper','sable_ensemble_preds_gfdl.rds'))
-write_rds(ss_ens_gfdl,here('model output','dts paper','ss_ensemble_preds_gfdl.rds'))
-write_rds(ls_ens_gfdl,here('model output','dts paper','ls_ensemble_preds_gfdl.rds'))
+write_rds(dover_ens_gfdl,here('model output','dover_ensemble_preds_gfdl.rds'))
+write_rds(sable_ens_gfdl,here('model output','sable_ensemble_preds_gfdl.rds'))
+write_rds(ss_ens_gfdl,here('model output','ss_ensemble_preds_gfdl.rds'))
+write_rds(ls_ens_gfdl,here('model output','ls_ensemble_preds_gfdl.rds'))
 ```
 
 Hadley
@@ -119,13 +199,15 @@ sable_ens_hadl <- ensemble_predictions(sable_models,gcm='hadl',nsims=100)
 ss_ens_hadl <- ensemble_predictions(ss_models,gcm="hadl",nsims=100)
 ls_ens_hadl <- ensemble_predictions(ls_models,gcm='hadl',nsims=100)
 
-write_rds(dover_ens_hadl,here('model output','dts paper','dover_ensemble_preds_hadl.rds'))
-write_rds(sable_ens_hadl,here('model output','dts paper','sable_ensemble_preds_hadl.rds'))
-write_rds(ss_ens_hadl,here('model output','dts paper','ss_ensemble_preds_hadl.rds'))
-write_rds(ls_ens_hadl,here('model output','dts paper','ls_ensemble_preds_hadl.rds'))
+write_rds(dover_ens_hadl,here('model output','dover_ensemble_preds_hadl.rds'))
+write_rds(sable_ens_hadl,here('model output','sable_ensemble_preds_hadl.rds'))
+write_rds(ss_ens_hadl,here('model output','ss_ensemble_preds_hadl.rds'))
+write_rds(ls_ens_hadl,here('model output','ls_ensemble_preds_hadl.rds'))
 ```
 
 ### Join 3 ESM Predictions
+
+Join the 3 projected datasets for each species. We join these projected datasets in a couple of different ways to facilitate different kinds of plotting later.
 
 ```{r,eval=F}
 dover_ens_sims <-list(dover_ens_gfdl,dover_ens_ipsl,dover_ens_hadl) %>% bind_rows() %>% 
@@ -160,11 +242,13 @@ ls_ens_sims <-list(ls_ens_gfdl,ls_ens_ipsl,ls_ens_hadl) %>% bind_rows() %>%
     mutate(data=purrr::map(data,function(x)as.numeric(as.matrix(x))),
            species='ls')
 
-write_rds(sable_ens_sims,here('model output','dts paper','sable_ensemble_all_sims.rds'))
-write_rds(dover_ens_sims,here('model output','dts paper','dover_ensemble_all_sims.rds'))
-write_rds(ss_ens_sims,here('model output','dts paper','ss_ensemble_all_sims.rds'))
-write_rds(ls_ens_sims,here('model output','dts paper','ls_ensemble_all_sims.rds'))
+write_rds(sable_ens_sims,here('model output','sable_ensemble_all_sims.rds'))
+write_rds(dover_ens_sims,here('model output','dover_ensemble_all_sims.rds'))
+write_rds(ss_ens_sims,here('model output','ss_ensemble_all_sims.rds'))
+write_rds(ls_ens_sims,here('model output','ls_ensemble_all_sims.rds'))
 ```
+
+Same as the above, but join all 3 CCROMS-ESMs together, and calculate summary statistics (median, mean, 5th and 95th quantiles) for each combination of year and location.
 
 ```{r,eval=F}
 dover_ens_all <- purrr::map_df(list(dover_ens_gfdl,dover_ens_ipsl,dover_ens_hadl),function(df){
@@ -195,148 +279,15 @@ ls_ens_all <- purrr::map_df(list(ls_ens_gfdl,ls_ens_ipsl,ls_ens_hadl),function(d
   summarise(median_est=median(est),mean_est=mean(est),est5=quantile(est,0.05),est95=quantile(est,0.95)) %>% 
   ungroup()
 
-write_rds(sable_ens_all,here('model output','dts paper','sable_ensemble_preds_combined.rds'))
-write_rds(dover_ens_all,here('model output','dts paper','dover_ensemble_preds_combined.rds'))
-write_rds(ss_ens_all,here('model output','dts paper','ss_ensemble_preds_combined.rds'))
-write_rds(ls_ens_all,here('model output','dts paper','ls_ensemble_preds_combined.rds'))
+write_rds(sable_ens_all,here('model output','sable_ensemble_preds_combined.rds'))
+write_rds(dover_ens_all,here('model output','dover_ensemble_preds_combined.rds'))
+write_rds(ss_ens_all,here('model output','ss_ensemble_preds_combined.rds'))
+write_rds(ls_ens_all,here('model output','ls_ensemble_preds_combined.rds'))
 ```
 
-### Load
+### Ensemble Abundance Index
 
-```{r}
-# separate projections, with sims
-dover_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>% str_subset('dover_ensemble_preds') %>% 
-  str_subset("combined",negate=T) %>% map_df(read_rds)
-sable_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
-  str_subset('sable_ensemble_preds') %>% 
-  str_subset("combined",negate=T) %>% map_df(read_rds)
-ss_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
-  str_subset('ss_ensemble_preds') %>% 
-  str_subset("combined",negate=T) %>% map_df(read_rds)
-ls_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
-  str_subset('ls_ensemble_preds') %>% 
-  str_subset("combined",negate=T) %>% map_df(read_rds)
-
-# combined across ESMs
-dover_ens_all <- read_rds(here('model output','dts paper','dover_ensemble_preds_combined.rds')) %>% 
-  mutate(species='dover')
-  # rename(dover_median=median_est,dover_lower=est5,dover_upper=est95)
-sable_ens_all <- read_rds(here('model output','dts paper','sable_ensemble_preds_combined.rds'))%>% 
-  mutate(species='sable')
-  # rename(sable_median=median_est,sable_lower=est5,sable_upper=est95)
-ss_ens_all <- read_rds(here('model output','dts paper','ss_ensemble_preds_combined.rds'))%>% 
-  mutate(species='ss')
-  # rename(ss_median=median_est,ss_lower=est5,ss_upper=est95)
-ls_ens_all <- read_rds(here('model output','dts paper','ls_ensemble_preds_combined.rds'))%>% 
-  mutate(species='ls')
-  # rename(ls_median=median_est,ls_lower=est5,ls_upper=est95)
-
-# with sims
-dover_ens_sims <- read_rds(here('model output','dts paper','dover_ensemble_all_sims.rds'))
-sable_ens_sims <- read_rds(here('model output','dts paper','sable_ensemble_all_sims.rds'))
-ss_ens_sims <- read_rds(here('model output','dts paper','ss_ensemble_all_sims.rds'))
-ls_ens_sims <- read_rds(here('model output','dts paper','ls_ensemble_all_sims.rds'))
-
-# Join. We need the data in slightly different forms for different analyses
-# separate ESMs
-four_spp_list <- list("dover"=dover_ens_separate,
-                      "sable"=sable_ens_separate,
-                      "ss"=ss_ens_separate,
-                      "ls"=ls_ens_separate)
-# combined ensemble abundance
-four_spp <- list(dover_ens_all,sable_ens_all,ss_ens_all,ls_ens_all) %>% bind_rows() %>% 
-  # join roms data
-  left_join(roms,by = c("year", "longitude", "latitude", "lat", "lon"))
-
-# with separate sims
-# four_spp_sims <- list(dover_ens_sims,sable_ens_sims,ss_ens_sims,ls_ens_sims) %>% bind_rows() %>% 
-#   # add summary columns
-#   mutate(mean_est=purrr::map_dbl(data,mean),
-#          est5=purrr::map_dbl(data,quantile,probs=0.05),
-#          est95=purrr::map_dbl(data,quantile,probs=0.95))
-```
-
-## Model Fit Visualization
-
-### Model Tables
-
-```{r}
-dover_fit_table <- report_model_ensemble(dover_models)
-sable_fit_table <- report_model_ensemble(sable_models)
-ss_fit_table <- report_model_ensemble(ss_models)
-ls_fit_table <- report_model_ensemble(ls_models)
-write_csv(dover_fit_table,here('model output','dts paper','dover_fit_table.csv'))
-write_csv(sable_fit_table,here('model output','dts paper','sable_fit_table.csv'))
-write_csv(ss_fit_table,here('model output','dts paper','ss_fit_table.csv'))
-write_csv(ls_fit_table,here('model output','dts paper','ls_fit_table.csv'))
-```
-
-### QQ plots
-
-```{r}
-doverqq = make_qq_plots(dover_models)
-sableqq = make_qq_plots(sable_models)
-ssqq = make_qq_plots(ss_models)
-lsqq = make_qq_plots(ls_models)
-ggsave(here('model output','dts paper','dover_qq.png'),doverqq,h=3,w=8)
-ggsave(here('model output','dts paper','sable_qq.png'),sableqq,h=3,w=8)
-ggsave(here('model output','dts paper','ss_qq.png'),ssqq,h=3,w=8)
-ggsave(here('model output','dts paper','ls_qq.png'),lsqq,h=3,w=8)
-```
-
-
-### Environmental Niches
-
-```{r,fig.width=8}
-make_fitted_env_niches <- function(simsdf,gcm,sppname){
-  d <- simsdf %>% 
-    filter(esm==gcm) %>%
-    pivot_longer(contains('sim'),names_to="sim",values_to="est") %>% 
-    group_by(year,longitude,latitude,lat,lon,depth_m,esm) %>% 
-    summarise(mean_est=mean(est,na.rm=T)) %>% 
-    ungroup() %>% 
-    left_join(roms,by=c("year", "longitude", "latitude", "lat", "lon"))
-  niches <- purrr::map_df(c(0.05,0.5,0.75,0.95),function(thresh){
-    make_spp_concave_hull(ens_preds=d,yr_vec=1985:2010,sppname=sppname,threshold=thresh,esm=gcm,lt=50,concavity = 3) %>% 
-      mutate(threshold=thresh)
-  })
-  niches_plot <- ggplot(niches,aes(V1,V2,color=as.factor(threshold)))+
-    geom_polygon(fill=NA,size=1.25)+
-    scale_x_continuous(limits=c(0,14),breaks=seq(0,14,by=2))+
-    scale_y_continuous(limits=c(0,280),breaks=seq(0,250,by=50))+
-    labs(y="Bottom Oxygen (mmol/m3)",x="Bottom Temperature",color="Quantile of\nCPUE values",
-       title=paste(tools::toTitleCase(sppname),toupper(gcm),"\n1985-2010"))+
-    theme(legend.position=c(0.25,0.7),
-          panel.background = element_rect(color='black'))
-  niches_plot
-}
-```
-
-
-```{r}
-dover_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='dover sole',
-                           simsdf=dover_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
-
-sable_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='sablefish',
-                           simsdf=sable_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
-
-ss_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='shortspine',
-                        simsdf=ss_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
-
-ls_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='longspine',
-                        simsdf=ls_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
-ggsave(here('model output','dts paper','dover_envir_niche.png'),dover_niches,h=6,w=8)
-ggsave(here('model output','dts paper','sable_envir_niche.png'),sable_niches,h=6,w=8)
-ggsave(here('model output','dts paper','ss_envir_niche.png'),ss_niches,h=6,w=8)
-ggsave(here('model output','dts paper','ls_envir_niche.png'),ls_niches,h=6,w=8)
-
-```
-
-# Manuscript Figures
-
-## Figure 1
-
-Index of abundance
+Create ensemble indices of abundance.
 
 ```{r,eval=F}
 tic("Dover indices:")
@@ -377,27 +328,135 @@ toc()
 ```
 
 ```{r,eval=F}
-write_rds(sable_ind_all,here('model output','dts paper','sable_abun_indices.rds'))
-write_rds(dover_ind_all,here('model output','dts paper','dover_abun_indices.rds'))
-write_rds(ss_ind_all,here('model output','dts paper','ss_abun_indices.rds'))
-write_rds(ls_ind_all,here('model output','dts paper','ls_abun_indices.rds'))
-```
-```{r}
-sable_ind_all<-read_rds(here('model output','dts paper','sable_abun_indices.rds'))
-dover_ind_all<-read_rds(here('model output','dts paper','dover_abun_indices.rds'))
-ss_ind_all<-read_rds(here('model output','dts paper','ss_abun_indices.rds'))
-ls_ind_all<-read_rds(here('model output','dts paper','ls_abun_indices.rds'))
+write_rds(sable_ind_all,here('model output','sable_abun_indices.rds'))
+write_rds(dover_ind_all,here('model output','dover_abun_indices.rds'))
+write_rds(ss_ind_all,here('model output','ss_abun_indices.rds'))
+write_rds(ls_ind_all,here('model output','ls_abun_indices.rds'))
 ```
 
+### Load
+
+```{r}
+# separate projections, with sims
+dover_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>% str_subset('dover_ensemble_preds') %>% 
+  str_subset("combined",negate=T) %>% map_df(read_rds)
+sable_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
+  str_subset('sable_ensemble_preds') %>% 
+  str_subset("combined",negate=T) %>% map_df(read_rds)
+ss_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
+  str_subset('ss_ensemble_preds') %>% 
+  str_subset("combined",negate=T) %>% map_df(read_rds)
+ls_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
+  str_subset('ls_ensemble_preds') %>% 
+  str_subset("combined",negate=T) %>% map_df(read_rds)
+
+# combined across ESMs
+dover_ens_all <- read_rds(here('model output','dover_ensemble_preds_combined.rds')) %>% 
+  mutate(species='dover')
+sable_ens_all <- read_rds(here('model output','sable_ensemble_preds_combined.rds'))%>% 
+  mutate(species='sable')
+ss_ens_all <- read_rds(here('model output','ss_ensemble_preds_combined.rds'))%>% 
+  mutate(species='ss')
+ls_ens_all <- read_rds(here('model output','ls_ensemble_preds_combined.rds'))%>% 
+  mutate(species='ls')
+
+# with sims
+dover_ens_sims <- read_rds(here('model output','dover_ensemble_all_sims.rds'))
+sable_ens_sims <- read_rds(here('model output','sable_ensemble_all_sims.rds'))
+ss_ens_sims <- read_rds(here('model output','ss_ensemble_all_sims.rds'))
+ls_ens_sims <- read_rds(here('model output','ls_ensemble_all_sims.rds'))
+
+# Join. We need the data in slightly different forms for different analyses
+# separate ESMs
+four_spp_list <- list("dover"=dover_ens_separate,
+                      "sable"=sable_ens_separate,
+                      "ss"=ss_ens_separate,
+                      "ls"=ls_ens_separate)
+
+# combined ensemble abundance
+four_spp <- list(dover_ens_all,sable_ens_all,ss_ens_all,ls_ens_all) %>% bind_rows() %>% 
+  # join roms data
+  left_join(roms,by = c("year", "longitude", "latitude", "lat", "lon"))
+```
+
+```{r}
+# Load abundance indices
+sable_ind_all<-read_rds(here('model output','sable_abun_indices.rds'))
+dover_ind_all<-read_rds(here('model output','dover_abun_indices.rds'))
+ss_ind_all<-read_rds(here('model output','ss_abun_indices.rds'))
+ls_ind_all<-read_rds(here('model output','ls_abun_indices.rds'))
+```
+
+## Model Fit Visualization
+
+### Model Tables
+
+Model fit tables for the Appendix
+
+```{r}
+dover_fit_table <- report_model_ensemble(dover_models)
+sable_fit_table <- report_model_ensemble(sable_models)
+ss_fit_table <- report_model_ensemble(ss_models)
+ls_fit_table <- report_model_ensemble(ls_models)
+
+write_csv(dover_fit_table,here('model output','dover_fit_table.csv'))
+write_csv(sable_fit_table,here('model output','sable_fit_table.csv'))
+write_csv(ss_fit_table,here('model output','ss_fit_table.csv'))
+write_csv(ls_fit_table,here('model output','ls_fit_table.csv'))
+```
+
+### QQ plots
+
+QQ plots for the Appendix.
+
+```{r}
+doverqq = make_qq_plots(dover_models)
+sableqq = make_qq_plots(sable_models)
+ssqq = make_qq_plots(ss_models)
+lsqq = make_qq_plots(ls_models)
+
+ggsave(here('model output','dover_qq.png'),doverqq,h=3,w=8)
+ggsave(here('model output','sable_qq.png'),sableqq,h=3,w=8)
+ggsave(here('model output','ss_qq.png'),ssqq,h=3,w=8)
+ggsave(here('model output','ls_qq.png'),lsqq,h=3,w=8)
+```
+
+### Environmental Niches
+
+Environmental niches for each species separately, for the Appendix.
+
+```{r}
+dover_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='dover sole',
+                           simsdf=dover_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
+
+sable_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='sablefish',
+                           simsdf=sable_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
+
+ss_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='shortspine',
+                        simsdf=ss_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
+
+ls_niches <- purrr::map(c('gfdl','ipsl','hadl'),make_fitted_env_niches,sppname='longspine',
+                        simsdf=ls_ens_separate) %>% plot_grid(plotlist=.,nrow=1)
+
+ggsave(here('model output','dover_envir_niche.png'),dover_niches,h=6,w=8)
+ggsave(here('model output','sable_envir_niche.png'),sable_niches,h=6,w=8)
+ggsave(here('model output','ss_envir_niche.png'),ss_niches,h=6,w=8)
+ggsave(here('model output','ls_envir_niche.png'),ls_niches,h=6,w=8)
+
+```
+
+# Manuscript Figures
+
+## Figure 1
+
 ```{r,fig.height=4,fig.width=3}
-# 
 fourspp_ind_all <- dover_ind_all %>% mutate(spp="Dover sole") %>% 
   bind_rows(sable_ind_all %>% mutate(spp="Sablefish")) %>% 
   bind_rows(ss_ind_all %>% mutate(spp="Shortspine thornyhead")) %>% 
   bind_rows(ls_ind_all %>% mutate(spp="Longspine thornyhead")) %>% 
   mutate(spp=factor(spp,levels=c("Dover sole","Sablefish","Shortspine thornyhead","Longspine thornyhead")))
 
-# get a sense for historical variability (95% quantiles?)
+# get a sense for historical variability (5th and 95th% quantiles)
 fourspp_ind_range <- fourspp_ind_all %>% 
   filter(year%in%c(1985:2010)) %>% 
   group_by(spp) %>% 
@@ -438,8 +497,8 @@ fourspp_ind_fig <- ggdraw()+
   draw_image(here('data','icons','sablefish_sil.png'),hjust=.17,vjust=-.1,scale=0.25)+
   draw_image(here('data','icons','shortspine_sil.png'),hjust=.17,vjust=.1,scale=0.26)+
   draw_image(here('data','icons','longspine_sil.png'),hjust=.17,vjust=.22,scale=0.23)
-fourspp_ind_fig
 ```
+
 Coastwide environmental change
 
 ```{r,fig.height=7,fig.width=3}
@@ -454,7 +513,8 @@ coast_t_o_hist <- roms %>%
   group_by(longitude,latitude) %>%
   summarise(t=mean(t_ens),
             oxy=mean(oxy_ens)) %>% 
-  ungroup() 
+  ungroup()
+
 coast_t_o_fut <- roms %>% 
   dplyr::select(mean_bt_30d_ipsl,mean_bt_30d_gfdl,mean_bt_30d_hadl,
                 mean_oxy_bottom_30d_ipsl,mean_oxy_bottom_30d_gfdl, mean_oxy_bottom_30d_hadl,
@@ -493,21 +553,20 @@ coast_o_plot <- t_o_grid %>%
   coord_sf(datum=NA)+
   labs(x="",y="",fill=expression(paste(Delta,"O")))+
   theme(legend.position = c(0.4,0.6))
-# 
-# coast_t_o_plot <- plot_grid(coast_t_plot,NULL,coast_o_plot,nrow=1,rel_widths = c(1,-0.7,1))
+
 coast_t_o_plot <- plot_grid(coast_t_plot,NULL,coast_o_plot,ncol=1,rel_heights = c(1,-0.1,1))
-coast_t_o_plot
 ```
 
-```{r,fig.height=7,fig.width=6}
+```{r,fig.height=7,fig.width=6.5}
 fig1 <- plot_grid(coast_t_o_plot,NULL,fourspp_ind_fig,ncol=3,labels=c('a','','b'),rel_widths = c(0.8,-0.1,1))
 fig1
-ggsave(here('model output','dts paper','fig1.png'),fig1,w=6.5,h=7)
+ggsave(here('model output','fig1.png'),fig1,w=6.5,h=7)
 ```
 
 ## Figure 2
 
 Weighted distance from shore
+
 ```{r}
 fourspp_reldist <- purrr::map(four_spp_list,calc_rel_dist_to_shore)
 fourspp_reldist <- bind_rows(fourspp_reldist,.id='species')
@@ -549,13 +608,6 @@ footprint_dist_to_shore <- footprints %>%
   summarise(mean_km_to_coast=mean(km_to_coast))
 ```
 
-```{r}
-# latitudinal centroid of fishing footprints
-fp_lat <- footprints %>% st_centroid() %>% st_transform(4326) %>% 
-  st_coordinates() %>% as_tibble() %>% set_names(c("lon","lat")) %>% 
-  mutate(yint=0)
-```
-
 Make the plot
 
 ```{r,fig.width=8,fig.height=6}
@@ -565,21 +617,13 @@ four_spp_dist_to_shore_change <- ggplot(data=fourspp_reldist_change,
   geom_hline(yintercept=0,linetype=2)+
   geom_smooth(data=fourspp_reldist_change,
              aes(x=lat,y=change,fill=spp_plotting,col=spp_plotting))+
-  # geom_point(data=fp_lat,aes(x=lat,y=-20),color='black',size=2)+
   scale_y_continuous(limits=c(-20,20))+
   facet_wrap(~ESM,nrow=1)+
   scale_color_manual(values=pal4)+
-  # scale_fill_manual(values=pal4)+
-  # scale_y_reverse(limits=c(90,20))+
   coord_flip()+
   guides(fill='none')+
-  # theme(legend.position = c(0.8,0.7))+
   labs(y="Change in Distance from Shore (km)",x="Latitude",col="Species",fill="Species")+
   theme(panel.background = element_rect(fill=NA,color='black'))
-```
-
-```{r}
-# ggsave(here('model output','dts paper','four species distance from shore.png'),four_spp_dist_to_shore_change,w=8,h=6)
 ```
 
 Depth change
@@ -611,16 +655,10 @@ fourspp_depth_plot <- fourspp_depth %>%
         axis.text.y=element_text(size=10),
         panel.background = element_rect(fill=NA,color='black'),
         legend.position="bottom")
-fourspp_depth_plot
-```
-
-```{r}
-# ggsave(here('model output','dts paper','fig_depth_change_four_spp.png'),fourspp_depth_plot,w=6,h=4)
 ```
 
 
 ```{r,fig.width=8,fig.height=7.5}
-
 dist_to_shore_fig <- ggdraw()+
   draw_plot(four_spp_dist_to_shore_change+theme(plot.margin=unit(c(0.5,0.5,0.1,0.5),'cm'))+guides(color='none',fill='none'))+
   draw_line(x=c(0.27,0.37),y=c(0.84,0.85),size=1,lineend = "round",linetype=2)+
@@ -634,10 +672,6 @@ dist_to_shore_fig <- ggdraw()+
 
 depth_change_fig <- ggdraw()+
   draw_plot(fourspp_depth_plot + guides(color='none',fill='none') + theme(plot.margin=unit(c(0,0.5,1.5,0.5),'cm')))+
-  # draw_line(x=c(0.22,0.35),y=c(0.89,0.9),size=1)+
-  # draw_line(x=c(0.21,0.3),y=c(0.85,0.7),size=1)+
-  # draw_line(x=c(0.245,0.3),y=c(0.82,0.77),size=1)+
-  # draw_line(x=c(0.1,0.15),y=c(0.65,0.8),size=1)+
   draw_image(here('data','icons','dover1.png'),hjust=.35,vjust=-.34,scale=0.08)+
   draw_image(here('data','icons','sablefish.png'),hjust=.35,vjust=0,scale=0.14)+
   draw_image(here('data','icons','shortspine.png'),hjust=.35,vjust=-.09,scale=0.12)+
@@ -645,7 +679,6 @@ depth_change_fig <- ggdraw()+
 
 leg <- get_legend(fourspp_depth_plot)
 
-
 fig_dist_depth_change<-plot_grid(dist_to_shore_fig, depth_change_fig,
                                  nrow=2,labels='auto')
 
@@ -653,98 +686,18 @@ fig_dist_depth_change<-ggdraw()+
   draw_plot(fig_dist_depth_change)+
   draw_plot(leg,y=-0.45)
 
-ggsave(here('model output','dts paper','fig_dist_depth_change.png'),fig_dist_depth_change,w=8,h=7.5)
-```
-### Alternate
-
-```{r}
-four_spp_dist_to_shore_change <- fourspp_reldist_change %>% 
-  group_by(spp_plotting,lat,esm) %>% 
-  slice_sample(n=25) %>% 
-  ggplot(aes(x=lat,y=change,fill=ESM,col=ESM))+
-  # geom_point(color='gray80',alpha=0.2,size=0.7)+
-  geom_point(size=0.5,alpha=0.2,position = position_jitter())+
-  geom_hline(yintercept=0,linetype=2)+
-  geom_smooth(data=fourspp_reldist_change,
-             aes(x=lat,y=change,fill=ESM,col=ESM),se=F)+
-  # geom_point(data=fp_lat,aes(x=lat,y=-20),color='black',size=2)+
-  scale_y_continuous(limits=c(-20,20))+
-  facet_wrap(~spp_plotting,nrow=1)+
-  scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
-  scale_fill_manual(values=c("#009175","#7E0018","#00C2F9"))+
-  coord_flip()+
-  # theme(legend.position = c(0.8,0.7))+
-  labs(y="Change in Distance from Shore (km)",x="Latitude",col="ESM",fill="ESM")+
-  theme(panel.background = element_rect(fill=NA,color='black'),
-        strip.text=element_text(size=12))
-four_spp_dist_to_shore_change
-```
-Depth change
-
-```{r}
-fourspp_depth <- purrr::map(four_spp_list,calc_depth_frac,start_year=2020,end_year=2100) %>% bind_rows(.id='species')
-
-fourspp_depth_plot <- fourspp_depth %>% 
-    mutate(spp_plotting=case_when(
-      species=='dover' ~ "Dover Sole",
-      species=="ls" ~ "Longspine",
-      species=="ss"~"Shortspine",
-      species=="sable" ~"Sablefish"
-    )) %>% 
-    mutate(spp_plotting=factor(spp_plotting,levels=c("Dover Sole","Sablefish","Shortspine","Longspine"))) %>% 
-  mutate(ESM=toupper(esm)) %>% 
-  group_by(species,year,esm) %>% 
-  slice_sample(n=25) %>% 
-  ungroup() %>% 
-  ggplot(aes(x=year,y=frac,col=ESM,fill=ESM))+
-  geom_point(size=0.5,alpha=0.2,position = position_jitter())+
-  geom_smooth(se=F)+
-  scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
-  scale_fill_manual(values=c("#009175","#7E0018","#00C2F9"))+
-  facet_wrap(~spp_plotting,nrow=1)+
-  # scale_color_manual(values=c("#2271B2","#d55e00"))+
-  labs(x="Year",y="Proportion < 700 fathoms",title="",fill="ESM",col="ESM")+
-  theme(axis.text.x = element_text(angle=30,vjust=1,hjust=1),
-        panel.background = element_rect(fill=NA,color='black'),
-        strip.text=element_blank(),
-        legend.position="bottom")
-fourspp_depth_plot
-```
-```{r}
-
-dist_to_shore_fig <- ggdraw()+
-  draw_plot(four_spp_dist_to_shore_change+theme(plot.margin=unit(c(0.5,0.5,0.1,0.5),'cm'))+guides(color='none',fill='none'))
-
-depth_change_fig <- ggdraw()+
-  draw_plot(fourspp_depth_plot + guides(color='none',fill='none') + theme(plot.margin=unit(c(0,0.5,1.5,0.5),'cm')))+
-  draw_image(here('data','icons','dover_sil.png'),hjust=.36,vjust=0.15,scale=0.10)+
-  draw_image(here('data','icons','sablefish_sil.png'),hjust=.11,vjust=0.15,scale=0.14)+
-  draw_image(here('data','icons','shortspine_sil.png'),hjust=-.1,vjust=0.15,scale=0.15)+
-  draw_image(here('data','icons','longspine_sil.png'),hjust=-.32,vjust=0.15,scale=0.12)
-
-leg <- get_legend(fourspp_depth_plot)
-
-
-fig_dist_depth_change<-plot_grid(dist_to_shore_fig, depth_change_fig,
-                                 nrow=2,labels='auto')
-
-fig_dist_depth_change<-ggdraw()+
-  draw_plot(fig_dist_depth_change)+
-  draw_plot(leg,y=-0.45)
-
-ggsave(here('model output','dts paper','fig_dist_depth_change2.png'),fig_dist_depth_change,w=8,h=7.5)
+ggsave(here('model output','fig2.png'),fig_dist_depth_change,w=8,h=7.5)
 ```
 
 ## Figure 3
 
-Fishing footprints
+Fishing footprints map
 
 ```{r}
 bbox=st_bbox(projection_extent)
 footprints_map <- ggplot()+
   geom_sf(data=footprints,aes(fill=port_name),alpha=0.5)+
   geom_sf(data=coast,col=NA,fill='gray80')+
-  # geom_sf(data=isobaths,col='gray20')+
   geom_sf(data=port_coords,aes(color=port_name),size=3)+
   scale_fill_npg()+
   scale_color_npg()+
@@ -759,7 +712,7 @@ footprints_map <- ggplot()+
         legend.position=c(0.7,0.65))
 ```
 
-Environmental state space within fishing footprints
+Environmental state space within fishing footprints.
 
 ```{r}
 roms_env_space <- roms %>% 
@@ -802,7 +755,7 @@ footprint_env_space <- roms_env_space_sf %>%
             mean_t_fut=mean(t_fut),mean_oxy_fut=mean(oxy_fut)) %>% 
   ungroup()
 
-# mean across the entire ROMS domain
+# mean across the entire CCROMS domain
 roms_env_change_mean <- roms_env_space_sf %>% 
   st_set_geometry(NULL) %>% 
   distinct() %>% 
@@ -813,11 +766,11 @@ footprint_env_space <- footprint_env_space %>% bind_rows(roms_env_change_mean) %
   mutate(port_name=factor(port_name,levels=c("Coastwide","Astoria","Coos Bay","Brookings","Crescent City","Eureka","Fort Bragg","Morro Bay")))
 ```
 
-Make environmental affinities ellipses
+Make environmental affinities ellipses for species
 
 ```{r}
 aff_polys<-affinities_ellipses_ens(four_spp,yr_vec=1985:2010,concavity=5,threshold=0.25,lt=50)
-# plotting order for colors
+# need to use new_scale_color() here to have multiple color scales for different pieces of the figure
 polys_and_footprints <- ggplot()+
   geom_polygon(data=aff_polys,aes(V1,V2,col=spp_plotting,linetype=spp_plotting),fill=NA,size=1)+
   scale_linetype_manual(values=c(1:4),guide='none')+
@@ -841,20 +794,10 @@ polys_and_footprints_fig <- ggdraw()+
   draw_image(here('data','icons','sablefish_sil.png'),hjust=.10,vjust=-.17,scale=0.15)+
   draw_image(here('data','icons','shortspine_sil.png'),hjust=.14,vjust=-.03,scale=0.15)+
   draw_image(here('data','icons','longspine_sil.png'),hjust=.23,vjust=.08,scale=0.13)
-polys_and_footprints_fig  
 ```
 
 
 ```{r}
-# footprint_db_temp_plot <- footprint_env_space %>% 
-#   ggplot(aes(x=mean_t_hist,xend=mean_t_fut,y=fct_rev(port_name),col=port_name))+
-#   geom_segment(col=,size=1,linetype=1,arrow=ggplot2::arrow(type="open",length=unit(0.1,'inches')))+
-#   geom_segment(color="#FCAE91",colour_x =NA,colour_xend = "#A50F15",
-#                 size=1,size_x=3,size_xend = 3) +
-#   labs(x="Temperature",y="")+
-#   scale_y_discrete(position='right')+
-#   theme(panel.border = element_rect(color='black',fill=NA),
-#         axis.text.y=element_text(color=c(rev(pal_npg()(7)),'gray50')))
 footprint_db_temp_plot <- footprint_env_space %>% 
   ggplot(aes(x=mean_t_hist,xend=mean_t_fut,y=fct_rev(port_name),yend=fct_rev(port_name),col=port_name))+
   geom_segment(col="#A50F15",size=1,linetype=1,arrow=ggplot2::arrow(type="closed",length=unit(0.1,'inches')))+
@@ -862,14 +805,6 @@ footprint_db_temp_plot <- footprint_env_space %>%
   scale_y_discrete(position='right')+
   theme(panel.border = element_rect(color='black',fill=NA),
         axis.text.y=element_text(color=c(rev(pal_npg()(7)),'gray50')))
-# footprint_db_temp_plot
-
-# footprint_db_oxy_plot <- footprint_env_space %>% 
-#   ggplot(aes(x=mean_oxy_hist,xend=mean_oxy_fut,y=fct_rev(port_name)))+
-#   geom_dumbbell(color="#a3c4dc",colour_x =NA,colour_xend = "#0e668b",
-#                 size=1,size_x=3,size_xend = 3) +
-#   labs(x="Oxygen",y="")+
-#   theme(axis.text.y = element_blank(),panel.border = element_rect(color='black',fill=NA))
 
 footprint_db_oxy_plot <- footprint_env_space %>% 
   ggplot(aes(x=mean_oxy_hist,xend=mean_oxy_fut,y=fct_rev(port_name),yend=fct_rev(port_name),col=port_name))+
@@ -879,32 +814,6 @@ footprint_db_oxy_plot <- footprint_env_space %>%
 
 # footprint_db_oxy_plot
 footprint_env_change_map <- plot_grid(footprints_map,NULL,footprint_db_oxy_plot,footprint_db_temp_plot,ncol=4,rel_widths = c(0.6,-0.1,0.45,0.6),labels=c('a','','b','c'),hjust=c(-0.5,0,-0.5,0.4))
-footprint_env_change_map
-```
-
-```{r,fig.width=8,fig.height=8}
-# attach dumbbell plots
-# footprint_db_temp_plot2 <- footprint_env_space %>% 
-#   ggplot(aes(x=mean_t_hist,xend=mean_t_fut,y=fct_rev(port_name)))+
-#   geom_dumbbell(color="#FCAE91",colour_x =NA,colour_xend = "#A50F15",
-#                 size=1,size_x=3,size_xend = 3) +
-#   labs(x="Temperature",y="")+
-#   # coord_flip()+
-#   theme(panel.border = element_rect(color='black',fill=NA),
-#         axis.text.y=element_text(color=pal_npg()(7),size=10))
-# 
-# footprint_db_oxy_plot2 <- footprint_env_space %>% 
-#   ggplot(aes(x=mean_oxy_hist,xend=mean_oxy_fut,y=fct_rev(port_name)))+
-#   geom_dumbbell(color="#a3c4dc",colour_x =NA,colour_xend = "#0e668b",
-#                 size=1,size_x=3,size_xend = 3) +
-#   labs(x="Oxygen",y="")+
-#   # coord_flip()+
-#   theme(axis.text.y=element_text(color=pal_npg()(7),size=10),
-#         panel.border = element_rect(color='black',fill=NA))
-
-# fig3 <- plot_grid(footprint_db_temp_plot2,footprint_db_oxy_plot2,polys_and_footprints,labels='auto',nrow=3,
-#                   hjust = 0,vjust=1,
-#                   rel_heights = c(0.2,0.2,0.6))
 ```
 
 ```{r,fig.height=8,fig.width=8}
@@ -912,13 +821,16 @@ fig3 <- plot_grid(footprint_env_change_map,polys_and_footprints_fig,labels=c("",
                   hjust = 0,vjust=1,
                   rel_heights = c(0.5,0.5))
 fig3
-ggsave(here('model output','dts paper','fig_env_change_env_affs.png'),fig3,height=9,width=8,units='in')
+ggsave(here('model output','fig3.png'),fig3,height=9,width=8,units='in')
 ```
 
 ## Figure 4
 
-CPUE/Density
+CPUE/density timeseries
+
 ```{r}
+# calculate relative density
+
 allspp_reldens <- purrr::map2_df(list(dover_ens_separate,sable_ens_separate,ss_ens_separate,ls_ens_separate),
                                  c('dover','sable','shortspine','longspine'),
                                  function(x,y){
@@ -931,92 +843,12 @@ allspp_reldens <- purrr::map2_df(list(dover_ens_separate,sable_ens_separate,ss_e
       spp=="shortspine"~"Shortspine",
       spp=="sable" ~"Sablefish"
     )) %>% 
-  mutate(spp_plotting=factor(spp_plotting,levels=c("Sablefish","Dover Sole","Shortspine","Longspine"))) %>% 
-  # mutate(delta_perc=ifelse(delta_perc>200|delta_perc < -200,NA,delta_perc)) %>% 
+  mutate(spp_plotting=factor(spp_plotting,levels=c("Sablefish","Dover Sole","Shortspine","Longspine"))) %>%
   drop_na()
 ```
 
 ```{r}
-dover_dens_fp<-calc_footprint_dens_sims(dover_ens_sims)
-sable_dens_fp<-calc_footprint_dens_sims(sable_ens_sims)
-
-dover_sable_dens_change <- dover_dens_fp %>% 
-  left_join(sable_dens_fp,by=c("port_name","year")) %>% 
-  mutate(ratio=mean_cpue.x/mean_cpue.y)
-# dover_dens_fp <- dover_dens_fp %>% 
-#   group_by(port_name) %>%
-#   arrange(year) %>% 
-#   mutate(l1=lag(mean_cpue,1),
-#            l2=lag(mean_cpue,2),
-#            l3=lag(mean_cpue,3),
-#            l4=lag(mean_cpue,4),
-#            l5=lag(mean_cpue,5),
-#            lse1=lag(cpue5,1),
-#            lse2=lag(cpue5,2),
-#            lse3=lag(cpue5,3),
-#            lse4=lag(cpue5,4),
-#            lse5=lag(cpue5,5),
-#            l95.1=lag(cpue95,1),
-#            l95.2=lag(cpue95,2),
-#            l95.3=lag(cpue95,3),
-#            l95.4=lag(cpue95,4),
-#            l95.5=lag(cpue95,5)) %>% 
-#     mutate(mean_cpue_smooth=(l1+l2+l3+l4+l5)/5,
-#            cpue5_smooth=(lse1+lse2+lse3+lse4+lse5)/5,
-#            cpue95_smooth=(l95.1+l95.2+l95.3+l95.4+l95.5)/5) 
-# dover_dens_fp %>% 
-#   filter(port_name%in%c('Astoria',"Fort Bragg")) %>% 
-#   ggplot(aes(year,mean_cpue_smooth,ymin=cpue5_smooth,ymax=cpue95_smooth))+
-#   geom_ribbon(fill='gray80')+
-#   geom_line()+
-#   facet_wrap(~port_name)
-# 
-# sable_dens_fp <- sable_dens_fp %>% 
-#   group_by(port_name) %>%
-#   arrange(year) %>% 
-#   mutate(l1=lag(mean_cpue,1),
-#            l2=lag(mean_cpue,2),
-#            l3=lag(mean_cpue,3),
-#            l4=lag(mean_cpue,4),
-#            l5=lag(mean_cpue,5),
-#            lse1=lag(cpue5,1),
-#            lse2=lag(cpue5,2),
-#            lse3=lag(cpue5,3),
-#            lse4=lag(cpue5,4),
-#            lse5=lag(cpue5,5),
-#            l95.1=lag(cpue95,1),
-#            l95.2=lag(cpue95,2),
-#            l95.3=lag(cpue95,3),
-#            l95.4=lag(cpue95,4),
-#            l95.5=lag(cpue95,5)) %>% 
-#     mutate(mean_cpue_smooth=(l1+l2+l3+l4+l5)/5,
-#            cpue5_smooth=(lse1+lse2+lse3+lse4+lse5)/5,
-#            cpue95_smooth=(l95.1+l95.2+l95.3+l95.4+l95.5)/5) 
-# sable_dens_fp %>% 
-#   filter(port_name%in%c('Astoria',"Fort Bragg")) %>% 
-#   ggplot(aes(year,mean_cpue_smooth,ymin=cpue5_smooth,ymax=cpue95_smooth))+
-#   geom_ribbon(fill='gray80')+
-#   geom_line()+
-#   facet_wrap(~port_name)
-```
-
-
-```{r}
-## Facetted by ESM
-# dover_sable_reldens <- allspp_reldens %>% 
-#   filter(spp %in% c('dover','sable'),
-#          port_name%in%c('Astoria','Fort Bragg')) %>% 
-#   ggplot(aes(delta_perc,fill=spp_plotting))+
-#   geom_density()+
-#   geom_vline(xintercept=0,linetype=2)+
-#   scale_fill_manual(values=pal4)+
-#   facet_grid(ESM~port_name)+
-#   labs(x=expression(paste(Delta,"CPUE")),y="Kernel Density",fill="")+
-#   theme(legend.position = 'bottom',
-#         strip.text = element_text(size=10),
-#         panel.background = element_rect(color='black'))
-
-# Facetted by species
+# Plot dover and sablefish relative density change within Astoria and Fort Bragg footprints
 dover_sable_reldens <- allspp_reldens %>% 
   filter(spp %in% c('dover','sable'),
          port_name%in%c('Astoria','Fort Bragg')) %>% 
@@ -1030,70 +862,13 @@ dover_sable_reldens <- allspp_reldens %>%
   theme(legend.position = 'bottom',
         strip.text = element_text(size=10),
         panel.background = element_rect(color='black'))
-
-dover_sable_reldens
 ```
 
-Trying overlap metrics
+Bhattacharyya's coefficient
 
 ```{r}
-# dover_sable_overlap_change <- purrr::map_df(c('gfdl','hadl','ipsl'),
-#                                             lic_D_fps,
-#                                             sims_df1=dover_ens_separate,
-#                                             sims_df2=sable_ens_separate,fp=footprints) %>% 
-#   filter(year>2074)
-# 
-# dover_sable_overlap_fp <- dover_sable_overlap_change %>% 
-#   mutate(ESM=toupper(esm)) %>% 
-#   group_by(port_name,ESM) %>% 
-#   summarise(mean_change=mean(deltaL),upper=mean(deltaL)+sd(deltaL),lower=mean(deltaL)-sd(deltaL)) %>% 
-#   filter(port_name%in%c("Astoria","Fort Bragg")) %>% 
-#   ggplot(aes(port_name,mean_change,col=ESM,ymin=lower,ymax=upper))+
-#   geom_pointrange(position=position_jitter())+
-#   geom_hline(yintercept=0,linetype=2)+
-#   scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
-#   # facet_wrap(~port_name,ncol=2)+
-#   labs(x="Port Group",y=expression(paste(Delta,"L")))
-#   # xlim(c(-0.03,0.03))+
-#   # scale_color_manual(values=viridis_pal(option="D",begin=0.2,end=0.8)(3))
-#   # facet_wrap(~port_name)
-# dover_sable_overlap_fp
-```
+# calculate Bhattacharyya's coefficient using Dover sole and sablefish projections
 
-```{r}
-# dover_sable_bwo <- bwo_sims(dover_ens_separate,sable_ens_separate)
-# dover_sable_bwo_hist <- dover_sable_bwo %>%
-#   filter(year %in% c(1985:2010)) %>%
-#   group_by(port_name,esm,sim) %>%
-#   summarise(bwo_hist=mean(bwo)) %>%
-#   ungroup()
-# dover_sable_bwo_fut <- dover_sable_bwo %>%
-#   filter(year %in% c(2075:2100)) %>%
-#   group_by(port_name,esm,sim) %>%
-#   summarise(bwo_fut=mean(bwo)) %>%
-#   ungroup()
-# dover_sable_bwo_diff <- dover_sable_bwo_hist %>%
-#   left_join(dover_sable_bwo_fut) %>%
-#   mutate(bwod=bwo_fut-bwo_hist) %>%
-#   group_by(port_name,esm) %>%
-#   summarise(meandiff=mean(bwod),
-#             sddiff=sd(bwod)) %>%
-#   mutate(lower=meandiff-sddiff,upper=meandiff+sddiff) %>%
-#   ungroup()
-
-
-# dover_sable_bwo_plot <- dover_sable_bwo_diff %>%
-#   mutate(ESM=toupper(esm)) %>%
-#   filter(port_name%in%c("Astoria","Fort Bragg")) %>%
-#   ggplot(aes(port_name,meandiff,ymin=lower,ymax=upper))+
-#   geom_pointrange()+
-#   geom_hline(yintercept=0,linetype=2)+
-#   facet_wrap(~ESM,nrow=3)+
-#   labs(x="Port Group",y=expression(paste(Delta,"BWO")))
-# dover_sable_bwo_plot
-```
-
-```{r}
 dover_sable_bhat <- bhat_sims(dover_ens_separate,sable_ens_separate)
 dover_sable_bhat_hist <- dover_sable_bhat %>%
   filter(year %in% c(1985:2010)) %>%
@@ -1114,16 +889,6 @@ dover_sable_bhat_diff <- dover_sable_bhat_hist %>%
   mutate(lower=meandiff-sddiff,upper=meandiff+sddiff) %>%
   ungroup()
 
-# dover_sable_bhat_plot <- dover_sable_bhat_diff %>%
-#   mutate(ESM=toupper(esm)) %>%
-#   filter(port_name%in%c("Astoria","Fort Bragg")) %>%
-#   ggplot(aes(port_name,meandiff,ymin=lower,ymax=upper))+
-#   geom_pointrange()+
-#   geom_hline(yintercept=0,linetype=2)+
-#   facet_wrap(~ESM,nrow=3)+
-#   labs(x="Port Group",y=expression(paste(Delta,"Overlap")))+
-#   theme(panel.background = element_rect(color='black'),
-#         strip.text = element_text(size=10))
 dover_sable_bhat_plot <- dover_sable_bhat_diff %>%
   mutate(ESM=toupper(esm)) %>%
   filter(port_name%in%c("Astoria","Fort Bragg")) %>%
@@ -1134,50 +899,13 @@ dover_sable_bhat_plot <- dover_sable_bhat_diff %>%
   labs(x="Port Group",y=expression(paste(Delta,"Spatial Overlap")))+
   theme(panel.background = element_rect(color='black'),
         strip.text = element_text(size=10))
-dover_sable_bhat_plot
 ```
 
-
-```{r}
-# dover_sable_aa <- aa_sims(dover_ens_separate,sable_ens_separate)
-# dover_sable_aa_hist <- dover_sable_aa %>%
-#   filter(year %in% c(1985:2010)) %>%
-#   group_by(port_name,esm,sim) %>%
-#   summarise(aa_hist=mean(aa)) %>%
-#   ungroup()
-# dover_sable_aa_fut <- dover_sable_aa %>%
-#   filter(year %in% c(2075:2100)) %>%
-#   group_by(port_name,esm,sim) %>%
-#   summarise(aa_fut=mean(aa)) %>%
-#   ungroup()
-# dover_sable_aa_diff <- dover_sable_aa_hist %>%
-#   left_join(dover_sable_aa_fut) %>%
-#   mutate(aad=aa_fut-aa_hist) %>%
-#   group_by(port_name,esm) %>%
-#   summarise(meandiff=mean(aad),
-#             sddiff=sd(aad)) %>%
-#   mutate(lower=meandiff-sddiff,upper=meandiff+sddiff) %>%
-#   ungroup()
-# 
-# dover_sable_aa_plot <- dover_sable_aa_diff %>%
-#   mutate(ESM=toupper(esm)) %>%
-#   filter(port_name%in%c("Astoria","Fort Bragg")) %>%
-#   ggplot(aes(port_name,meandiff,ymin=lower,ymax=upper))+
-#   geom_pointrange()+
-#   geom_hline(yintercept=0,linetype=2)+
-#   facet_wrap(~ESM,nrow=3)+
-#   labs(x="Port Group",y=expression(paste(Delta,"Overlap")))+
-#   theme(panel.background = element_rect(color='black'),
-#         strip.text = element_text(size=10))
-# dover_sable_aa_plot
-```
-
-```{r}
+```{r,fig.height=8,fig.width=6}
 dover_sable_cpue_overlap <- plot_grid(dover_sable_reldens,dover_sable_bhat_plot,nrow=2,rel_heights=c(1,0.7),labels='auto')
 dover_sable_cpue_overlap
-ggsave(here('model output','dts paper','fig_cpue_bhat_fp.png'),dover_sable_cpue_overlap,h=8,w=6)
+ggsave(here('model output','fig4.png'),dover_sable_cpue_overlap,h=8,w=6)
 ```
-
 
 # Supplementary Figures
 
@@ -1194,10 +922,10 @@ cume_depth_plt <- ggdraw()+
   draw_image(here('data','icons','longspinet.png'),hjust=-.26,vjust=.3,scale=0.15)
 # cume_depth_plt
 
-ggsave(here('model output','dts paper','four_spp_cume_depth_sims.png'),cume_depth_plt,w=8,h=6)
+ggsave(here('model output','four_spp_cume_depth_sims.png'),cume_depth_plt,w=8,h=6)
 ```
 
-## Other ESMs
+## Other ESMs Environmental Change
 
 ```{r}
 coast_t_o_hist_hadl <- roms %>% 
@@ -1235,11 +963,9 @@ coast_o_plot_hadl <- t_o_grid_hadl %>%
   coord_sf(datum=NA)+
   labs(x="",y="",fill=expression(paste(Delta,"O")))+
   theme(legend.position = c(0.4,0.6))
-# 
-# coast_t_o_plot <- plot_grid(coast_t_plot,NULL,coast_o_plot,nrow=1,rel_widths = c(1,-0.7,1))
 coast_t_o_plot_hadl <- plot_grid(coast_t_plot_hadl,NULL,coast_o_plot_hadl,ncol=1,rel_heights = c(1,-0.1,1))
-coast_t_o_plot_hadl
 ```
+
 ```{r}
 coast_t_o_hist_gfdl <- roms %>% 
   dplyr::select(mean_bt_30d_gfdl,mean_oxy_bottom_30d_gfdl,latitude,longitude,year) %>% 
@@ -1279,17 +1005,17 @@ coast_o_plot_gfdl <- t_o_grid_gfdl %>%
 # 
 # coast_t_o_plot <- plot_grid(coast_t_plot,NULL,coast_o_plot,nrow=1,rel_widths = c(1,-0.7,1))
 coast_t_o_plot_gfdl <- plot_grid(coast_t_plot_gfdl,NULL,coast_o_plot_gfdl,ncol=1,rel_heights = c(1,-0.1,1))
-coast_t_o_plot_gfdl
 ```
-```{r}
+
+```{r,fig.height=7,fig.width=10}
 fig_hadl_gfdl_ipsl_change <- plot_grid(coast_t_o_plot,coast_t_o_plot_gfdl,coast_t_o_plot_hadl,ncol=3,labels=c("IPSL","GFDL","HADL"))
 fig_hadl_gfdl_ipsl_change
-ggsave(here::here('model output','dts paper','ESMs_env_change.png'),fig_hadl_gfdl_ipsl_change,h=7,w=10)
+ggsave(here::here('model output','ESMs_env_change.png'),fig_hadl_gfdl_ipsl_change,h=7,w=10)
 ```
 
 ## Bhattacharyya's and CPUE Change
 
-For all footprints
+Calculate CPUE and Bhattacharyya's coefficient between Dover sole and sablefish for all footprints (similar to Fig. 4)
 
 ```{r,fig.width=8,fig.height=6}
 dover_sable_reldens_all <- allspp_reldens %>% 
@@ -1320,17 +1046,18 @@ dover_sable_bhat_plot_all_fps <- dover_sable_bhat_diff %>%
         strip.text = element_text(size=10))
 dover_sable_bhat_plot_all_fps
 ```
-## Importance of DTS
+
+## Commercial Importance of DTS
+
 From PacFIN data extracted and organized by Sean Matson, 12/2022
 
 ```{r}
-dts_landings <- read_csv(here('data','pacfin_dts_landings_matson.csv'))
 dts_prop_landings_plot <- dts_landings %>% 
   ggplot(aes(PACFIN_YEAR,proportion))+
   geom_line()+
   labs(x="Year",y="DTS Proportion of All Trawl Groundfish")
 dts_prop_landings_plot
-ggsave(here('model output','dts paper','fig_dts_landings_prop.png'),dts_prop_landings_plot,h=5,w=6)
+ggsave(here('model output','fig_dts_landings_prop.png'),dts_prop_landings_plot,h=5,w=6)
 ```
 
 ```{r}
@@ -1383,377 +1110,5 @@ lbs_plot <- v %>%
         panel.border = element_rect(color='black',fill=NA))
 lbs_plot
 
-ggsave(here('model output','dts paper','fig_dts_landings_lbs.png'),lbs_plot,h=4,w=6.5)
-```
-# Deprecated/Old
-
-Overlap map (count number of species in each cell). This figure shows the number of species out of four in each grid cell that are at or above their median CPUE (across all cells) for that year.
-
-```{r,fig.width=6,fig.height=8}
-multimapdiff <- map_multispp_diff(four_spp,qlower=0.75,qupper=1)
-# multimapdiff
-```
-
-Finish Figure 1
-
-```{r}
-# row2 <- plot_grid(footprints_map,multimapdiff,labels=c('b','c'),nrow=1,rel_widths = c(0.8,1))
-# multimapcomp <- plot_grid(landings_plot,row2,nrow=2,rel_heights = c(0.3,0.7),labels='auto')
-# multimapcomp
-# 
-# ggsave(here('model output','dts paper','fig1.png'),multimapcomp,w=6,h=8)
-```
-## Old Figure 4
-Calculate GIC for each species combination, year, simulation, and ESM
-
-```{r,eval=F}
-tic("Ran GIC for sims")
-dover_sable_gic<-crossing(gcm=c('gfdl','ipsl','hadl'),simnum=1:100) %>%
-  mutate(gic=purrr::pmap(list(gcm,simnum),gic_sims,sims_df1=dover_ens_separate,sims_df2=sable_ens_separate))
-
-dover_ss_gic<-crossing(gcm=c('gfdl','ipsl','hadl'),simnum=1:100) %>%
-  mutate(gic=purrr::pmap(list(gcm,simnum),gic_sims,sims_df1=dover_ens_separate,sims_df2=ss_ens_separate))
-
-dover_ls_gic<-crossing(gcm=c('gfdl','ipsl','hadl'),simnum=1:100) %>%
-  mutate(gic=purrr::pmap(list(gcm,simnum),gic_sims,sims_df1=dover_ens_separate,sims_df2=ls_ens_separate))
-
-sable_ss_gic<-crossing(gcm=c('gfdl','ipsl','hadl'),simnum=1:100) %>%
-  mutate(gic=purrr::pmap(list(gcm,simnum),gic_sims,sims_df1=sable_ens_separate,sims_df2=ss_ens_separate))
-
-sable_ls_gic<-crossing(gcm=c('gfdl','ipsl','hadl'),simnum=1:100) %>%
-  mutate(gic=purrr::pmap(list(gcm,simnum),gic_sims,sims_df1=sable_ens_separate,sims_df2=ls_ens_separate))
-
-ss_ls_gic<-crossing(gcm=c('gfdl','ipsl','hadl'),simnum=1:100) %>%
-  mutate(gic=purrr::pmap(list(gcm,simnum),gic_sims,sims_df1=ss_ens_separate,sims_df2=ls_ens_separate))
-toc()
-# ~ 6 minutes total
-```
-Calculate LIC and Schoener's D.
-
-```{r,eval=F}
-tic("Ran LIC and D for sims")
-dover_sable_lic <- lic_D_sims(dover_ens_separate,sable_ens_separate)
-dover_ss_lic <- lic_D_sims(dover_ens_separate,ss_ens_separate)
-dover_ls_lic <- lic_D_sims(dover_ens_separate,ls_ens_separate)
-sable_ss_lic <- lic_D_sims(sable_ens_separate,ss_ens_separate)
-sable_ls_lic <- lic_D_sims(sable_ens_separate,ls_ens_separate)
-ss_ls_lic <- lic_D_sims(ss_ens_separate,ls_ens_separate)
-toc()
-# ~5 minutes total
-```
-Join and plot
-
-```{r,eval=F}
-dover_sable_overlap <- dover_sable_gic %>% 
-  unnest(cols=c(gic)) %>% 
-  mutate(year=rep(1980:2100,300)) %>% 
-  left_join(dover_sable_lic %>% mutate(simnum=str_remove(sim,'sim') %>% as.numeric()),
-            by=c('gcm'='esm','simnum','year'))
-dover_ss_overlap <- dover_ss_gic %>% 
-  unnest(cols=c(gic)) %>% 
-  mutate(year=rep(1980:2100,300)) %>% 
-  left_join(dover_ss_lic %>% mutate(simnum=str_remove(sim,'sim') %>% as.numeric()),
-            by=c('gcm'='esm','simnum','year'))
-dover_ls_overlap <- dover_ls_gic %>% 
-  unnest(cols=c(gic)) %>% 
-  mutate(year=rep(1980:2100,300)) %>% 
-  left_join(dover_ls_lic %>% mutate(simnum=str_remove(sim,'sim') %>% as.numeric()),
-            by=c('gcm'='esm','simnum','year'))
-sable_ss_overlap <- sable_ss_gic %>% 
-  unnest(cols=c(gic)) %>% 
-  mutate(year=rep(1980:2100,300)) %>% 
-  left_join(sable_ss_lic %>% mutate(simnum=str_remove(sim,'sim') %>% as.numeric()),
-            by=c('gcm'='esm','simnum','year'))
-sable_ls_overlap <- sable_ls_gic %>% 
-  unnest(cols=c(gic)) %>% 
-  mutate(year=rep(1980:2100,300)) %>% 
-  left_join(sable_ls_lic %>% mutate(simnum=str_remove(sim,'sim') %>% as.numeric()),
-            by=c('gcm'='esm','simnum','year'))
-ss_ls_overlap <- ss_ls_gic %>% 
-  unnest(cols=c(gic)) %>% 
-  mutate(year=rep(1980:2100,300)) %>% 
-  left_join(ss_ls_lic %>% mutate(simnum=str_remove(sim,'sim') %>% as.numeric()),
-            by=c('gcm'='esm','simnum','year'))
-```
-
-```{r,eval=F}
-# save overlap metrics
-overlaps_all <- list(dover_sable_overlap,dover_ss_overlap,dover_ls_overlap,sable_ss_overlap,sable_ls_overlap,ss_ls_overlap) %>% set_names(c('dover_sable','dover_ss','dover_ls','sable_ss','sable_ls','ss_ls'))
-write_rds(overlaps_all,here('model output','dts paper','overlap_metrics_all.rds'))
-```
-
-```{r}
-# Load
-overlaps_all <- read_rds(here('model output','dts paper','overlap_metrics_all.rds'))
-```
-
-
-```{r}
-# make a good color palette
-# 3 sets of 3 colors for the 3 ESMs and 3 metrics
-overlaps_cols <- c("#009175","#7E0018","#00C2F9")
-# overlaps_cols <- c("#005745","#009175","#00CBA7",
-#                    "#7E0018","#CD022D","#FF6E3A",
-#                    "#00306F","#005FCC","#00C2F9")
-overlap_plot_foo <- function(overlap_df,show_legend=FALSE,show_axes=FALSE){
-  p <- overlap_df %>% 
-    filter(year>2019) %>% 
-    pivot_longer(cols=c('gic','lic','D'),names_to='metric',values_to='value') %>% 
-    unite(esm_metric,gcm,metric,remove=F) %>% 
-    unite(sim_esm_metric,simnum,esm_metric,remove=F) %>% 
-    mutate(esm_metric=toupper(esm_metric)) %>% 
-    ggplot(aes(year,value,color=toupper(gcm),linetype=toupper(metric)))+
-    # geom_point(alpha=0.2,size=0.7)+
-    geom_line(aes(group=sim_esm_metric),color='gray80')+
-    geom_smooth(se=F)+
-    scale_color_manual(values=overlaps_cols)+
-    scale_linetype_manual(values=c(1,3,4))+
-    ylim(0,1)+
-    labs(x="Year",y="Overlap",color="ESM",linetype="Metric")+
-    theme(panel.background = element_rect(color="black",fill=NA),
-          legend.position = 'bottom')
-  out=p
-  if(!show_legend) out=out+guides(color='none',linetype="none")
-  if(!show_axes) out= out+theme(axis.title.y = element_blank())
-  out
-}
-```
-
-```{r,fig.width=8,fig.height=8}
-dover_sable_overlap_plot <- overlap_plot_foo(overlaps_all$dover_sable,show_legend = T,show_axes=T)
-dover_ss_overlap_plot <- overlap_plot_foo(overlaps_all$dover_ss,show_axes = T)
-dover_ls_overlap_plot <- overlap_plot_foo(overlaps_all$dover_ls)
-sable_ss_overlap_plot <- overlap_plot_foo(overlaps_all$sable_ss)
-sable_ls_overlap_plot <- overlap_plot_foo(overlaps_all$sable_ls)
-ss_ls_overlap_plot <- overlap_plot_foo(overlaps_all$ss_ls)
-overlaps_legend <- get_legend(dover_sable_overlap_plot)
-
-r1 <- plot_grid(dover_sable_overlap_plot+guides(color='none',linetype='none'),sable_ss_overlap_plot,sable_ls_overlap_plot,dover_ss_overlap_plot,dover_ls_overlap_plot,ss_ls_overlap_plot,nrow=2,labels='auto',vjust=1)
-r2=plot_grid(NULL,NULL,overlaps_legend,NULL,NULL,nrow=1)
-
-overlaps_all_fig4 <- plot_grid(r1,r2,nrow=2,rel_heights = c(1,0.2))
-
-# add fish silhouettes
-fig4<-ggdraw()+
-  draw_plot(overlaps_all_fig4)+
-  draw_image(here('data','icons','sablefish.png'),hjust=.36,vjust=-.17,scale=0.1)+
-  draw_image(here('data','icons','dover1.png'),hjust=.25,vjust=-.17,scale=0.1)+
-  draw_image(here('data','icons','sablefish.png'),hjust=0.05,vjust=-.17,scale=0.1)+
-  draw_image(here('data','icons','shortspine.png'),hjust=-0.08,vjust=-.17,scale=0.1)+
-  draw_image(here('data','icons','sablefish.png'),hjust=-.27,vjust=-.17,scale=0.1)+
-  draw_image(here('data','icons','longspinet.png'),hjust=-.41,vjust=-.17,scale=0.1)+
-  #row2
-  draw_image(here('data','icons','dover1.png'),hjust=.36,vjust=.23,scale=0.1)+
-  draw_image(here('data','icons','shortspine.png'),hjust=.25,vjust=.23,scale=0.1)+
-  draw_image(here('data','icons','dover1.png'),hjust=0.06,vjust=.23,scale=0.1)+
-  draw_image(here('data','icons','longspinet.png'),hjust=-0.08,vjust=.23,scale=0.1)+
-  draw_image(here('data','icons','shortspine.png'),hjust=-.27,vjust=.23,scale=0.1)+
-  draw_image(here('data','icons','longspinet.png'),hjust=-.41,vjust=.23,scale=0.1)
-fig4
-
-ggsave(here('model output','dts paper','fig_overlaps_all.png'),fig4,h=8,w=8)
-```
-
-## Figure 5
-
-Timeseries with color shading (Hovmoller type plot)
-
-```{r,eval=F,fig.height=8,fig.width=8}
-dover_sable_lic_D <- LIC_D_prop_change(dover_ens_separate,sable_ens_separate)
-dover_ss_lic_D <- LIC_D_prop_change(dover_ens_separate,ss_ens_separate)
-dover_ls_lic_D <- LIC_D_prop_change(dover_ens_separate,ls_ens_separate)
-sable_ss_lic_D <- LIC_D_prop_change(sable_ens_separate,ss_ens_separate)
-sable_ls_lic_D <- LIC_D_prop_change(sable_ens_separate,ls_ens_separate)
-ss_ls_lic_D <- LIC_D_prop_change(ss_ens_separate,ls_ens_separate)
-
-# together
-LIC_D_fps_all <- dover_sable_lic_D %>% mutate(spp="Sablefish/Dover Sole") %>% 
-  bind_rows(dover_ss_lic_D %>% mutate(spp="Dover Sole/Shortspine")) %>%  
-  bind_rows(dover_ls_lic_D %>% mutate(spp="Dover Sole/Longspine")) %>%  
-  bind_rows(sable_ss_lic_D %>% mutate(spp="Sablefish/Shortspine")) %>%  
-  bind_rows(sable_ls_lic_D %>% mutate(spp="Sablefish/Longspine")) %>%  
-  bind_rows(ss_ls_lic_D %>% mutate(spp="Shortspine/Longspine")) %>% 
-  mutate(spp=factor(spp,levels=c("Sablefish/Dover Sole","Sablefish/Shortspine","Sablefish/Longspine",
-                                 "Dover Sole/Shortspine","Dover Sole/Longspine","Shortspine/Longspine")))
-
-D_fps_plot <- LIC_D_fps_all %>% 
-  mutate(ESM=toupper(esm)) %>% 
-  ggplot(aes(year,fct_rev(spp),fill=D_prop/100,col=D_prop/100))+
-  geom_tile()+
-  # geom_point(size=0.2)+
-  # geom_smooth(se=F)+
-  facet_grid(port_name~ESM)+
-  scale_x_continuous(expand=c(0,0))+
-  # scale_y_continuous(limits=c(0,1))+
-  scale_fill_gradient2(midpoint=0.5)+
-  scale_color_gradient2(midpoint=0.5)+
-  # geom_hline(yintercept=0.5,linetype=2)+
-  labs(x="Year",y="Species Pair",fill="Proportion of Simulations\nwith Increased Overlap",
-       color="Proportion of Simulations\nwith Increased Overlap")+
-  theme(panel.background = element_rect(fill=NA,color='black'),
-        legend.position = 'bottom',
-        axis.text.x = element_text(angle=45,vjust=0.8,hjust=0.8),
-        legend.key.width = unit(0.75,'inches'),
-        panel.spacing = unit(0.2,'inches'),
-        strip.text = element_text(size=8),
-        panel.border = element_rect(color='black',fill=NA,size=1.5))
-
-D_fps_plot
-# ggsave(here('model output','dts paper','fig_overlaps_footprints.png'),D_fps_plot,w=8,h=8)
-```
-
-Hurricane point range plot showing 2075-2100 mean change
-
-```{r,fig.height=6,fig.width=8}
-dover_sable_lic_D <- LIC_D_mean_change(dover_ens_separate,sable_ens_separate)
-dover_ss_lic_D <- LIC_D_mean_change(dover_ens_separate,ss_ens_separate)
-dover_ls_lic_D <- LIC_D_mean_change(dover_ens_separate,ls_ens_separate)
-sable_ss_lic_D <- LIC_D_mean_change(sable_ens_separate,ss_ens_separate)
-sable_ls_lic_D <- LIC_D_mean_change(sable_ens_separate,ls_ens_separate)
-ss_ls_lic_D <- LIC_D_mean_change(ss_ens_separate,ls_ens_separate)
-
-# together
-LIC_D_fps_all <- dover_sable_lic_D %>% mutate(spp="Sablefish/Dover Sole") %>% 
-  bind_rows(dover_ss_lic_D %>% mutate(spp="Dover Sole/Shortspine")) %>%  
-  bind_rows(dover_ls_lic_D %>% mutate(spp="Dover Sole/Longspine")) %>%  
-  bind_rows(sable_ss_lic_D %>% mutate(spp="Sablefish/Shortspine")) %>%  
-  bind_rows(sable_ls_lic_D %>% mutate(spp="Sablefish/Longspine")) %>%  
-  bind_rows(ss_ls_lic_D %>% mutate(spp="Shortspine/Longspine")) %>% 
-  mutate(spp=factor(spp,levels=c("Sablefish/Dover Sole","Sablefish/Shortspine","Sablefish/Longspine",
-                                 "Dover Sole/Shortspine","Dover Sole/Longspine","Shortspine/Longspine")))
-
-# plot
-D_fps_plot <- LIC_D_fps_all %>% 
-  mutate(ESM=toupper(esm)) %>% 
-  mutate(upper=D_mean+D_sd,lower=D_mean-D_sd) %>% 
-  ggplot(aes(x=fct_rev(spp),y=D_mean,ymax=upper,ymin=lower,color=ESM))+
-  geom_pointrange(position = position_dodge(width=0.3))+
-  geom_hline(yintercept=0,linetype=2)+
-  coord_flip()+
-  scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
-  facet_wrap(~port_name)+
-  labs(x="Species Pair",y="Mean Change in Schoener's D",color="CCROMS Model")+
-  theme(panel.background = element_rect(fill=NA,color='black'),
-        # legend.position = 'right',
-        axis.text.x = element_text(angle=45,vjust=0.8,hjust=0.8),
-        # legend.key.width = unit(0.75,'inches'),
-        panel.spacing = unit(0.2,'inches'),
-        strip.text = element_text(size=8),
-        panel.border = element_rect(color='black',fill=NA,size=1.5))
-D_fps_plot
-ggsave(here('model output','dts paper','fig_overlaps_footprints.png'),D_fps_plot,w=8,h=6)
-```
-
-```{r,fig.height=6,fig.width=8}
-# LIC plot- does it look any different?
-LIC_fps_plot <- LIC_D_fps_all %>% 
-  mutate(ESM=toupper(esm)) %>% 
-  mutate(upper=L_mean+L_sd,lower=L_mean-L_sd) %>% 
-  ggplot(aes(x=fct_rev(spp),y=L_mean,ymax=upper,ymin=lower,color=ESM))+
-  geom_pointrange(position = position_dodge(width=0.3))+
-  geom_hline(yintercept=0,linetype=2)+
-  coord_flip()+
-  scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
-  facet_wrap(~port_name)+
-  labs(x="Species Pair",y="Mean Change in LIC",color="CCROMS Model")+
-  theme(panel.background = element_rect(fill=NA,color='black'),
-        # legend.position = 'right',
-        axis.text.x = element_text(angle=45,vjust=0.8,hjust=0.8),
-        # legend.key.width = unit(0.75,'inches'),
-        panel.spacing = unit(0.2,'inches'),
-        strip.text = element_text(size=8),
-        panel.border = element_rect(color='black',fill=NA,size=1.5))
-LIC_fps_plot
-```
-
-
-
-## Figure 6
-
-Try a new way with smoothed histograms
-
-```{r,fig.height=8,fig.width=8}
-allspp_reldens <- purrr::map2_df(list(dover_ens_separate,sable_ens_separate,ss_ens_separate,ls_ens_separate),
-                                 c('dover','sable','shortspine','longspine'),
-                                 function(x,y){
-                                   calc_footprint_reldens_sims(x) %>% mutate(spp=y)
-                                 }) %>%
-  mutate(ESM=toupper(esm)) %>% 
-  mutate(spp_plotting=case_when(
-      spp=='dover' ~ "Dover Sole",
-      spp=="longspine" ~ "Longspine",
-      spp=="shortspine"~"Shortspine",
-      spp=="sable" ~"Sablefish"
-    )) %>% 
-  mutate(spp_plotting=factor(spp_plotting,levels=c("Sablefish","Dover Sole","Shortspine","Longspine"))) %>% 
-  # mutate(delta_perc=ifelse(delta_perc>200|delta_perc < -200,NA,delta_perc)) %>% 
-  drop_na()
-
-reldens_fig <- allspp_reldens %>% 
-  dplyr::select(sim,ESM,spp_plotting,delta_perc,port_name) %>% 
-  mutate(spp_plotting=paste0('~',spp_plotting,'~')) %>% 
-  unite(fct,spp_plotting,port_name,sep="\n",remove=F) %>% 
-  mutate(fct=factor(fct,levels=unique(fct))) %>% 
-  ggplot(aes(delta_perc,fill=ESM))+
-  geom_density(alpha=0.5)+
-  geom_vline(xintercept=0,linetype=2)+
-  facet_wrap(~fct,scales='free',ncol=7)+
-  # xlim(-200,200)+
-  scale_color_manual(values=viridis_pal(option="D",begin=0.2,end=0.8)(3))+
-  scale_fill_manual(values=viridis_pal(option="D",begin=0.2,end=0.8)(3))+
-  labs(x="Percent Change in CPUE",y="",fill="CCROMS Model")+
-  theme(panel.background = element_rect(fill=NA,color='black'),
-        axis.text.y=element_blank(),
-        axis.text.x=element_text(angle=45,vjust=0.8,hjust=0.8),
-        axis.ticks.x = element_line(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor=element_blank())
-
-
-  # nest(dat=c(sim,ESM,port_name,delta_perc)) %>% 
-  # mutate(p=purrr::map(dat,function(d){
-  #     d %>%
-  #     ggplot(aes(delta_perc,fill=ESM))+
-  #     geom_density(alpha=0.5)+
-  #     geom_vline(xintercept=0,linetype=2)+
-  #     facet_wrap(~port_name,scales='free_y',nrow=1)+
-  #     # xlim(-200,200)+
-  #     scale_color_npg()+
-  #     scale_fill_npg()+
-  #     labs(x="Percent Change in CPUE",y="",fill="CCROMS Model")+
-  #     theme(panel.background = element_rect(fill=NA,color='black'),
-  #           axis.text.y=element_blank(),
-  #           panel.grid.major = element_blank(),
-  #           panel.grid.minor=element_blank())
-  # }))
-
-# plot_grid(plotlist = reldens_fig$p,nrow=4)
-
-reldens_fig
-ggsave(here('model output','dts paper','fig_cpue_change_footprints.png'),reldens_fig,w=8,h=8)
-```
-
-```{r,fig.height=6,fig.width=3.5}
-sable_reldens_fig <- allspp_reldens %>% 
-  filter(spp_plotting=="Sablefish",ESM=="IPSL") %>% 
-  dplyr::select(sim,ESM,spp_plotting,delta_perc,port_name) %>%
-  # mutate(spp_plotting=paste0('~',spp_plotting,'~')) %>%
-  # unite(fct,spp_plotting,port_name,sep="\n",remove=F) %>%
-  # mutate(fct=factor(fct,levels=unique(fct))) %>%
-  ggplot(aes(delta_perc,fill=ESM))+
-  geom_density(alpha=0.5)+
-  geom_vline(xintercept=0,linetype=2)+
-  facet_wrap(~port_name,ncol=1)+
-  # xlim(-200,200)+
-  scale_color_manual(values=viridis_pal(option="D",begin=0.2,end=0.8)(3))+
-  scale_fill_manual(values=viridis_pal(option="D",begin=0.2,end=0.8)(3))+
-  labs(x="Percent Change in CPUE",y="",fill="",title="Change in CPUE across 100 simulations",color="")+
-  guides(fill='none',color='none')+
-  theme(panel.background = element_rect(fill=NA,color='black'),
-        axis.text.y=element_blank(),
-        axis.text.x=element_text(size=12,angle=45,vjust=0.8,hjust=0.8),
-        axis.ticks.x = element_line(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor=element_blank())
-sable_reldens_fig
+ggsave(here('model output','fig_dts_landings_lbs.png'),lbs_plot,h=4,w=6.5)
 ```

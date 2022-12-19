@@ -1,0 +1,357 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata>
+  <idinfo>
+    <citation>
+      <citeinfo>
+        <origin>Department of Commerce (DOC), National Oceanic and Atmospheric Administration (NOAA), National Ocean Service (NOS), Office for Coastal Management (OCM)</origin>
+        <pubdate>20180510</pubdate>
+        <title>Elevation Bathymetry Contours</title>
+        <geoform>vector digital data</geoform>
+      </citeinfo>
+    </citation>
+    <descript>
+      <abstract>The feature class contains bathymetric contours which provide the size, shape and distribution of underwater features. The contours are from zero to -100m with a contour every 10 meters, a -101m to -500m with contours every 25meters, and -501m+ with contours every 100m until all contours had been created for the DEM utilized. The DEM utilized was the Global Multi-Resolution Topography (GMRT) Synthesis which is a multi-resolution gridded global Digital Elevation Model (DEM) that includes cleaned processed ship-based multibeam sonar data at their full spatial resolution (~100m in the deep sea). This dataset has been projected into World Mercator.</abstract>
+      <purpose>To support coastal and ocean planning and other activities pursuant to the Energy Policy Act, Coastal Zone Management Act, Magnuson-Stevens Fishery Conservation and Management Act, National Environmental Policy Act, Rivers and Harbors Act and the Submerged Lands Act. This feature class represents contours of elevation under the water's surface known as Bathymetry Contours.  This feature class contains contours from zero to -100m with a contour every 10 meters, a  -101m to -500m with contours every 25 meters, and  -501m+ with contours every 100m until all contours had been created for the utilized DEM.</purpose>
+    </descript>
+    <timeperd>
+      <timeinfo>
+        <sngdate>
+          <caldate>20180510</caldate>
+        </sngdate>
+      </timeinfo>
+      <current>ground condition</current>
+    </timeperd>
+    <status>
+      <progress>Complete</progress>
+      <update>As needed</update>
+    </status>
+    <spdom>
+      <bounding>
+        <westbc>-179.977287</westbc>
+        <eastbc>179.984439</eastbc>
+        <northbc>74.680439</northbc>
+        <southbc>-17.541414</southbc>
+      </bounding>
+    </spdom>
+    <keywords>
+      <theme>
+        <themekt>None</themekt>
+        <themekey>Oceans</themekey>
+        <themekey>Elevation</themekey>
+        <themekey>Bathymetry</themekey>
+        <themekey>USA</themekey>
+      </theme>
+    </keywords>
+    <accconst>None</accconst>
+    <useconst>These data are intended for coastal and ocean use planning. Not for navigation.</useconst>
+    <ptcontac>
+      <cntinfo>
+        <cntorgp>
+          <cntorg>Office for Coastal Management</cntorg>
+          <cntper>NOAA Office for Coastal Management</cntper>
+        </cntorgp>
+        <cntpos>MarineCadastre.gov Data Steward</cntpos>
+        <cntaddr>
+          <addrtype>mailing and physical</addrtype>
+          <address>2234 South Hobson Ave </address>
+          <city>North Charleston</city>
+          <state>SC</state>
+          <postal>29405-2413</postal>
+        </cntaddr>
+        <cntvoice>843-740-1202</cntvoice>
+        <cntemail>coastal.info@noaa.gov</cntemail>
+      </cntinfo>
+    </ptcontac>
+    <datacred>Department of Commerce (DOC), National Oceanic and Atmospheric Administration (NOAA), National Ocean Service (NOS), Office for Coastal Management (OCM)</datacred>
+    <native>Microsoft Windows 7 Version 6.1 (Build 7601) Service Pack 1; Esri ArcGIS 10.4.1.5713</native>
+  </idinfo>
+  <dataqual>
+    <attracc>
+      <attraccr>No formal attribute accuracy test was conducted. The attributes in this dataset are believed to be accurate.</attraccr>
+    </attracc>
+    <logic>These data are believed to be logically consistent. Geometry is topologically clean. During quality control, attributes were checked to ensure that they fell within the expected ranges or had expected/valid values. Text attribute values were checked for spelling and usage consistency. No topology tests were conducted. </logic>
+    <complete>Spatial and attribute properties are believed to be complete, although attribute information has been simplified. Geometric thresholds from original data are preserved. No tests have been completed for exhaustiveness.</complete>
+    <posacc>
+      <horizpa>
+        <horizpar>Maximum scale of intended use is 1:80,000.</horizpar>
+      </horizpa>
+    </posacc>
+    <lineage>
+      <srcinfo>
+        <srccite>
+          <citeinfo>
+            <origin>NOAA Office for Coastal Management, Office for Coastal Management</origin>
+            <pubdate>20180501</pubdate>
+            <title>GRMT DEM (USA &amp; Territories to EEZ)</title>
+            <othercit>The Global Multi-Resolution Topography (GMRT) Synthesis is maintained as a multi-resolution gridded global Digital Elevation Model (DEM) that includes cleaned processed ship-based multibeam sonar data at their full spatial resolution (~100m in the deep sea). Multibeam bathymetry data are unique among the marine geophysical data types in their relevance for a broad range of scientific investigations and non-academic uses, providing fundamental characterization of the physical environment and serving as primary base maps for multidisciplinary programs. While specialist expertise is needed to access, quality control and process multibeam bathymetry data files to generate high-quality bathymetric maps, the GMRT Synthesis provides free open access to bathymetric images and gridded bathymetric data for specialist and non-specialist users alike. Details about the tiling method and procedures used for creating and serving the GMRT synthesis is available in Ryan et al., 2009.</othercit>
+            <onlink>https://www.gmrt.org/about/index.php#source</onlink>
+          </citeinfo>
+        </srccite>
+        <typesrc>online</typesrc>
+        <srctime>
+          <timeinfo>
+            <sngdate>
+              <caldate>20180501</caldate>
+            </sngdate>
+          </timeinfo>
+          <srccurr>ground condition</srccurr>
+        </srctime>
+        <srccitea>GRMT DEM (USA &amp; Territories to EEZ)</srccitea>
+        <srccontr>Digital Elevation Model (DEM) layer package</srccontr>
+      </srcinfo>
+      <srcinfo>
+        <srccite>
+          <citeinfo>
+            <origin>Pacific Islands Benthic Habitat Mapping Center (PIBHMC), NOAA IRC, NMFS / PIFSC / CRED / PIBHMC, GIS Data Steward</origin>
+            <pubdate>20060930</pubdate>
+            <title>American Samoa (NEB_20m.asc.zip , OfuOlo_5m.asc.zip , Rose_40m.asc.zip, Swains_40m.asc.zip , Tau_5m.asc.zip, Tutuila_5m.asc.zip, Two_40m.asc.zip , Vailuluu_40m.asc.zip)</title>
+            <onlink>https://www.soest.hawaii.edu/pibhmc/cms/</onlink>
+          </citeinfo>
+        </srccite>
+        <typesrc>online</typesrc>
+        <srctime>
+          <timeinfo>
+            <sngdate>
+              <caldate>20060930</caldate>
+            </sngdate>
+          </timeinfo>
+          <srccurr>ground condition</srccurr>
+        </srctime>
+        <srccitea>American Samoa (NEB_20m.asc.zip , OfuOlo_5m.asc.zip , Rose_40m.asc.zip, Swains_40m.asc.zip , Tau_5m.asc.zip, Tutuila_5m.asc.zip, Two_40m.asc.zip , Vailuluu_40m.asc.zip)</srccitea>
+        <srccontr>Individual .asc files</srccontr>
+      </srcinfo>
+      <procstep>
+        <procdesc>Download GRMT DEM of all USA &amp; Territory areas to the EEZ &amp; mosaic together to form one EEZ_DEM. Utilize ArcGIS spatial analyst - contour tool  &amp; create three data sets,
+1. zero to -100 creating a contour every 10 meters, 
+2. -101 to -500 with contours every 25meters, 
+3. -501+ with contours every 100m. 
+Remove any contours that are created that are not within the designated layers by using the select by attribute in the Attribute Table &amp; selecting only the contours you want to keep, export the data as a new shapefile.</procdesc>
+        <procdate>20180501</procdate>
+        <proccont>
+          <cntinfo>
+            <cntorgp>
+              <cntorg>Quantum Spatial Inc</cntorg>
+            </cntorgp>
+            <cntpos>E-GIS Data Manager</cntpos>
+            <cntaddr>
+              <addrtype>mailing and physical</addrtype>
+              <address>10033 MLK Street N, Suite 200</address>
+              <city>St. Petersburg</city>
+              <state>Florida </state>
+              <postal>33716</postal>
+            </cntaddr>
+            <cntvoice>(727) 576-9500</cntvoice>
+          </cntinfo>
+        </proccont>
+      </procstep>
+      <procstep>
+        <procdesc>Merge the three contour data sets to make one Contours set for the America EEZ &amp; dissolve based on the Contours interval.  Utilize a shapefile of America &amp; US Territories land areas only to erase sections of contours that might fall on land given the granularity of the Rasters. Call this contour set: USA_EEZContours_Clipped.</procdesc>
+        <procdate>20180502</procdate>
+        <proccont>
+          <cntinfo>
+            <cntorgp>
+              <cntorg>Quantum Spatial Inc</cntorg>
+            </cntorgp>
+            <cntpos>E-GIS Data Manager</cntpos>
+            <cntaddr>
+              <addrtype>mailing and physical</addrtype>
+              <address>10033 MLK Street N, Suite 200</address>
+              <city>St. Petersburg</city>
+              <state>Florida </state>
+              <postal>33716</postal>
+            </cntaddr>
+            <cntvoice>(727) 576-9500</cntvoice>
+          </cntinfo>
+        </proccont>
+      </procstep>
+      <procstep>
+        <procdesc>Gather individual American Samoa .asc files, set  proper projections for each file, merge American Samoa files to one Raster, project into Mercator.
+Utilize Raster to Polygon to create an exact area of the American Samoa Raster to cut out of  EEZ_DEM contours.
+Utilize the contour tool (spatial analyst) &amp; create three data sets, 
+1. zero to -100 creating a contour every 10 meters, 
+2. -101 to -500 with contours every 25meters, 
+3. -501+ with contours every 100m.
+Remove any contours that create that are not within the designated layer by using the select by attribute in the Attribute Table &amp; selecting only the contours you want to keep, export the data as a new shapefile.  Merge the three contour data sets to make one Contour set &amp; dissolve based on the Contours interval, call layer American Samoa Contours.</procdesc>
+        <procdate>20180503</procdate>
+        <proccont>
+          <cntinfo>
+            <cntorgp>
+              <cntorg>Quantum Spatial Inc</cntorg>
+            </cntorgp>
+            <cntpos>E-GIS Data Manager</cntpos>
+            <cntaddr>
+              <addrtype>mailing and physical</addrtype>
+              <address>10033 MLK Street N, Suite 200</address>
+              <city>St. Petersburg</city>
+              <state>Florida </state>
+              <postal>33716</postal>
+            </cntaddr>
+            <cntvoice>(727) 576-9500</cntvoice>
+          </cntinfo>
+        </proccont>
+      </procstep>
+      <procstep>
+        <procdesc>From the USA_EEZContours_Clipped utilize the Erase tool using the American Samoa Raster Polygon.  This will remove any of the contours that were created previously that are at a lower detail existing where the American Samoa Contours will exist.
+Merge the American Samoas Contours into the EEZ_DEM contours &amp; Dissolve by Contour then name the resulting contour shapefile: BathymetryContours.
+Label all the features by contour with a mask for increased visibility, add scale range to not show when zoomed out past 1:15million (min scale).</procdesc>
+        <procdate>20180504</procdate>
+        <proccont>
+          <cntinfo>
+            <cntorgp>
+              <cntorg>Quantum Spatial Inc</cntorg>
+            </cntorgp>
+            <cntpos>E-GIS Data Manager</cntpos>
+            <cntaddr>
+              <addrtype>mailing and physical</addrtype>
+              <address>10033 MLK Street N, Suite 200</address>
+              <city>St. Petersburg</city>
+              <state>Florida </state>
+              <postal>33716</postal>
+            </cntaddr>
+            <cntvoice>(727) 576-9500</cntvoice>
+          </cntinfo>
+        </proccont>
+      </procstep>
+      <procstep>
+        <procdesc>Utilized the Smooth Line (Cartography) Tool with the PAEK algorithm to calculate a smoothed line that will not pass through the input line vertices at a .1 Decimal Degree smoothing tolerance &amp; preserving endpoints for closed lines to create an enhanced cartographic product for viewing.</procdesc>
+        <procdate>20180511</procdate>
+        <proccont>
+          <cntinfo>
+            <cntorgp>
+              <cntorg>Quantum Spatial Inc</cntorg>
+            </cntorgp>
+            <cntpos>E-GIS Data Manager</cntpos>
+            <cntaddr>
+              <addrtype>mailing and physical</addrtype>
+              <address>10033 MLK Street N, Suite 200</address>
+              <city>St. Petersburg</city>
+              <state>Florida </state>
+              <postal>33716</postal>
+            </cntaddr>
+            <cntvoice>(727) 576-9500</cntvoice>
+          </cntinfo>
+        </proccont>
+      </procstep>
+    </lineage>
+  </dataqual>
+  <spdoinfo>
+    <direct>Vector</direct>
+    <ptvctinf>
+      <sdtsterm>
+        <sdtstype>String</sdtstype>
+        <ptvctcnt>126</ptvctcnt>
+      </sdtsterm>
+    </ptvctinf>
+  </spdoinfo>
+  <spref>
+    <horizsys>
+      <planar>
+        <mapproj>
+          <mapprojn>WGS 1984 World Mercator</mapprojn>
+          <mercator>
+            <stdparll>0.0</stdparll>
+            <longcm>0.0</longcm>
+            <feast>0.0</feast>
+            <fnorth>0.0</fnorth>
+          </mercator>
+        </mapproj>
+        <planci>
+          <plance>coordinate pair</plance>
+          <coordrep>
+            <absres>0.0001</absres>
+            <ordres>0.0001</ordres>
+          </coordrep>
+          <plandu>meter</plandu>
+        </planci>
+      </planar>
+      <geodetic>
+        <horizdn>D WGS 1984</horizdn>
+        <ellips>WGS 1984</ellips>
+        <semiaxis>6378137.0</semiaxis>
+        <denflat>298.257223563</denflat>
+      </geodetic>
+    </horizsys>
+  </spref>
+  <eainfo>
+    <detailed>
+      <enttyp>
+        <enttypl>BathymetryContours</enttypl>
+        <enttypd>Bathymetry Contours</enttypd>
+        <enttypds>NOAA</enttypds>
+      </enttyp>
+      <attr>
+        <attrlabl>OBJECTID</attrlabl>
+        <attrdef>Internal feature number.</attrdef>
+        <attrdefs>Esri</attrdefs>
+        <attrdomv>
+          <udom>Sequential unique whole numbers that are automatically generated.</udom>
+        </attrdomv>
+      </attr>
+      <attr>
+        <attrlabl>Shape</attrlabl>
+        <attrdef>Feature geometry.</attrdef>
+        <attrdefs>Esri</attrdefs>
+        <attrdomv>
+          <udom>Coordinates defining the features.</udom>
+        </attrdomv>
+      </attr>
+      <attr>
+        <attrlabl>Contour</attrlabl>
+        <attrdef>Bathymetric contours show seafloor relief or terrain as contour lines (called depth contours or isobaths)</attrdef>
+        <attrdefs>NOAA</attrdefs>
+        <attrdomv>
+          <udom>An interval in meters below zero elevation.</udom>
+        </attrdomv>
+      </attr>
+      <attr>
+        <attrlabl>Shape_Length</attrlabl>
+        <attrdef>Length of feature in internal units.</attrdef>
+        <attrdefs>Esri</attrdefs>
+        <attrdomv>
+          <udom>Positive real numbers that are automatically generated.</udom>
+        </attrdomv>
+      </attr>
+    </detailed>
+  </eainfo>
+  <distinfo>
+    <distrib>
+      <cntinfo>
+        <cntorgp>
+          <cntorg>Office for Coastal Management</cntorg>
+          <cntper>NOAA Office for Coastal Management</cntper>
+        </cntorgp>
+        <cntaddr>
+          <addrtype>mailing and physical</addrtype>
+          <city>2234 South Hobson Ave</city>
+          <state>SC</state>
+          <postal>29405-2413</postal>
+        </cntaddr>
+        <cntvoice>843-740-1202</cntvoice>
+        <cntemail>coastal.info@noaa.gov</cntemail>
+      </cntinfo>
+    </distrib>
+    <distliab>These data are intended for coastal and ocean use planning. Not for navigation. Please check sources, scale, accuracy, currentness and other available information. Please confirm that you are using the most recent copy of both data and metadata. http://www.marinecadastre.gov/about/disclaimer.html.</distliab>
+  </distinfo>
+  <metainfo>
+    <metd>20180510</metd>
+    <metc>
+      <cntinfo>
+        <cntorgp>
+          <cntorg>Quantum Spatial Inc</cntorg>
+        </cntorgp>
+        <cntpos>E-GIS Data Manager</cntpos>
+        <cntaddr>
+          <addrtype>mailing and physical</addrtype>
+          <address>10033 MLK Street N, Suite 200</address>
+          <city>St. Petersburg</city>
+          <state>Florida </state>
+          <postal>33716</postal>
+        </cntaddr>
+        <cntvoice>(727) 576-9500</cntvoice>
+      </cntinfo>
+    </metc>
+    <metstdn>FGDC Content Standard for Digital Geospatial Metadata</metstdn>
+    <metstdv>FGDC-STD-001-1998</metstdv>
+    <mettc>local time</mettc>
+  </metainfo>
+</metadata>
