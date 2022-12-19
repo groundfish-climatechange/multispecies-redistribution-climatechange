@@ -77,8 +77,19 @@ roms_dist_to_coast <- read_rds(here::here('data','roms_distance_to_shore.rds'))
 ```
 
 ```{r}
-# Spatial extent of study area
+# Spatial data and mapping
+# Extent of study area
 projection_extent <- read_rds(here::here('data','cropped_domain_for_projected_sdms.rds'))
+# 10km raster grid of the same extent
+gr <- projection_extent %>% st_make_grid(cellsize=10,what='centers') %>% st_as_sf() %>% 
+  st_intersection(projection_extent)
+gr_xy <- st_coordinates(gr)
+
+# coastline background map
+coast <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>%
+  st_transform(crs = "+proj=utm +zone=10 +datum=WGS84 +units=km")
+
 ```
 
 ```{r}
@@ -338,15 +349,16 @@ write_rds(ls_ind_all,here('model output','ls_abun_indices.rds'))
 
 ```{r}
 # separate projections, with sims
-dover_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>% str_subset('dover_ensemble_preds') %>% 
+dover_ens_separate <- list.files(here('model output'),full.names = T) %>% 
+  str_subset('dover_ensemble_preds') %>% 
   str_subset("combined",negate=T) %>% map_df(read_rds)
-sable_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
+sable_ens_separate <- list.files(here('model output'),full.names = T) %>%
   str_subset('sable_ensemble_preds') %>% 
   str_subset("combined",negate=T) %>% map_df(read_rds)
-ss_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
+ss_ens_separate <- list.files(here('model output'),full.names = T) %>%
   str_subset('ss_ensemble_preds') %>% 
   str_subset("combined",negate=T) %>% map_df(read_rds)
-ls_ens_separate <- list.files(here('model output','dts paper'),full.names = T) %>%
+ls_ens_separate <- list.files(here('model output'),full.names = T) %>%
   str_subset('ls_ensemble_preds') %>% 
   str_subset("combined",negate=T) %>% map_df(read_rds)
 
@@ -601,31 +613,26 @@ fourspp_reldist_change <- fourspp_reldist_hist %>%
 ```
 
 ```{r}
-footprint_dist_to_shore <- footprints %>% 
-  st_join(roms_dist_to_coast %>% st_as_sf(coords=c('longitude','latitude'),crs="+proj=utm +zone=10 +datum=WGS84 +units=km")) %>%
-  st_set_geometry(NULL) %>% 
-  group_by(port_name) %>% 
-  summarise(mean_km_to_coast=mean(km_to_coast))
-```
-
-Make the plot
-
-```{r,fig.width=8,fig.height=6}
-four_spp_dist_to_shore_change <- ggplot(data=fourspp_reldist_change,
-             aes(x=lat,y=change,fill=spp_plotting,col=spp_plotting))+
-  geom_point(color='gray80',alpha=0.2,size=0.7)+
+four_spp_dist_to_shore_change <- fourspp_reldist_change %>% 
+  group_by(spp_plotting,lat,esm) %>% 
+  slice_sample(n=25) %>% 
+  ggplot(aes(x=lat,y=change,fill=ESM,col=ESM))+
+  # geom_point(color='gray80',alpha=0.2,size=0.7)+
+  geom_point(size=0.5,alpha=0.2,position = position_jitter())+
   geom_hline(yintercept=0,linetype=2)+
   geom_smooth(data=fourspp_reldist_change,
-             aes(x=lat,y=change,fill=spp_plotting,col=spp_plotting))+
+             aes(x=lat,y=change,fill=ESM,col=ESM),se=F)+
+  # geom_point(data=fp_lat,aes(x=lat,y=-20),color='black',size=2)+
   scale_y_continuous(limits=c(-20,20))+
-  facet_wrap(~ESM,nrow=1)+
-  scale_color_manual(values=pal4)+
+  facet_wrap(~spp_plotting,nrow=1)+
+  scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
+  scale_fill_manual(values=c("#009175","#7E0018","#00C2F9"))+
   coord_flip()+
-  guides(fill='none')+
-  labs(y="Change in Distance from Shore (km)",x="Latitude",col="Species",fill="Species")+
-  theme(panel.background = element_rect(fill=NA,color='black'))
+  # theme(legend.position = c(0.8,0.7))+
+  labs(y="Change in Distance from Shore (km)",x="Latitude",col="ESM",fill="ESM")+
+  theme(panel.background = element_rect(fill=NA,color='black'),
+        strip.text=element_text(size=12))
 ```
-
 Depth change
 
 ```{r}
@@ -643,39 +650,30 @@ fourspp_depth_plot <- fourspp_depth %>%
   group_by(species,year,esm) %>% 
   slice_sample(n=25) %>% 
   ungroup() %>% 
-  ggplot(aes(x=year,y=frac,col=spp_plotting,fill=spp_plotting))+
-  geom_point(alpha=0.2,size=0.7,col='gray80')+
+  ggplot(aes(x=year,y=frac,col=ESM,fill=ESM))+
+  geom_point(size=0.5,alpha=0.2,position = position_jitter())+
   geom_smooth(se=F)+
-  scale_color_manual(values=pal4)+
-  scale_fill_manual(values=pal4)+
-  facet_wrap(~ESM,nrow=1)+
+  scale_color_manual(values=c("#009175","#7E0018","#00C2F9"))+
+  scale_fill_manual(values=c("#009175","#7E0018","#00C2F9"))+
+  facet_wrap(~spp_plotting,nrow=1)+
   # scale_color_manual(values=c("#2271B2","#d55e00"))+
-  labs(x="Year",y="Proportion < 700 fathoms",title="",fill="Species",col="Species")+
-  theme(axis.text.x=element_text(size=10),
-        axis.text.y=element_text(size=10),
+  labs(x="Year",y="Proportion < 700 fathoms",title="",fill="ESM",col="ESM")+
+  theme(axis.text.x = element_text(angle=30,vjust=1,hjust=1),
         panel.background = element_rect(fill=NA,color='black'),
+        strip.text=element_blank(),
         legend.position="bottom")
 ```
 
-
 ```{r,fig.width=8,fig.height=7.5}
 dist_to_shore_fig <- ggdraw()+
-  draw_plot(four_spp_dist_to_shore_change+theme(plot.margin=unit(c(0.5,0.5,0.1,0.5),'cm'))+guides(color='none',fill='none'))+
-  draw_line(x=c(0.27,0.37),y=c(0.84,0.85),size=1,lineend = "round",linetype=2)+
-  draw_line(x=c(0.255,0.35),y=c(0.8,0.6),size=1,lineend = "round",linetype=2)+
-  draw_line(x=c(0.29,0.35),y=c(0.76,0.7),size=1,lineend = "round",linetype=2)+
-  draw_line(x=c(0.15,0.19),y=c(0.6,0.75),size=1,lineend = "round",linetype=2)+
-  draw_image(here('data','icons','dover1.png'),hjust=.15,vjust=-.35,scale=0.08)+
-  draw_image(here('data','icons','sablefish.png'),hjust=.15,vjust=-.12,scale=0.14)+
-  draw_image(here('data','icons','shortspine.png'),hjust=.15,vjust=-.2,scale=0.12)+
-  draw_image(here('data','icons','longspinet.png'),hjust=.35,vjust=-.09,scale=0.1)
+  draw_plot(four_spp_dist_to_shore_change+theme(plot.margin=unit(c(0.5,0.5,0.1,0.5),'cm'))+guides(color='none',fill='none'))
 
 depth_change_fig <- ggdraw()+
   draw_plot(fourspp_depth_plot + guides(color='none',fill='none') + theme(plot.margin=unit(c(0,0.5,1.5,0.5),'cm')))+
-  draw_image(here('data','icons','dover1.png'),hjust=.35,vjust=-.34,scale=0.08)+
-  draw_image(here('data','icons','sablefish.png'),hjust=.35,vjust=0,scale=0.14)+
-  draw_image(here('data','icons','shortspine.png'),hjust=.35,vjust=-.09,scale=0.12)+
-  draw_image(here('data','icons','longspinet.png'),hjust=.35,vjust=-.2,scale=0.1)
+  draw_image(here('data','icons','dover_sil.png'),hjust=.36,vjust=0.15,scale=0.10)+
+  draw_image(here('data','icons','sablefish_sil.png'),hjust=.11,vjust=0.15,scale=0.14)+
+  draw_image(here('data','icons','shortspine_sil.png'),hjust=-.1,vjust=0.15,scale=0.15)+
+  draw_image(here('data','icons','longspine_sil.png'),hjust=-.32,vjust=0.15,scale=0.12)
 
 leg <- get_legend(fourspp_depth_plot)
 
@@ -685,6 +683,8 @@ fig_dist_depth_change<-plot_grid(dist_to_shore_fig, depth_change_fig,
 fig_dist_depth_change<-ggdraw()+
   draw_plot(fig_dist_depth_change)+
   draw_plot(leg,y=-0.45)
+
+fig_dist_depth_change
 
 ggsave(here('model output','fig2.png'),fig_dist_depth_change,w=8,h=7.5)
 ```
@@ -829,8 +829,6 @@ ggsave(here('model output','fig3.png'),fig3,height=9,width=8,units='in')
 CPUE/density timeseries
 
 ```{r}
-# calculate relative density
-
 allspp_reldens <- purrr::map2_df(list(dover_ens_separate,sable_ens_separate,ss_ens_separate,ls_ens_separate),
                                  c('dover','sable','shortspine','longspine'),
                                  function(x,y){
@@ -868,20 +866,25 @@ Bhattacharyya's coefficient
 
 ```{r}
 # calculate Bhattacharyya's coefficient using Dover sole and sablefish projections
-
 dover_sable_bhat <- bhat_sims(dover_ens_separate,sable_ens_separate)
+
+# historical overlap, 1985-2010
 dover_sable_bhat_hist <- dover_sable_bhat %>%
   filter(year %in% c(1985:2010)) %>%
   group_by(port_name,esm,sim) %>%
   summarise(bhat_hist=mean(bhat)) %>%
   ungroup()
+
+# projected future overlap, 2075-21000
 dover_sable_bhat_fut <- dover_sable_bhat %>%
   filter(year %in% c(2075:2100)) %>%
   group_by(port_name,esm,sim) %>%
   summarise(bhat_fut=mean(bhat)) %>%
   ungroup()
+
+# difference between past and future
 dover_sable_bhat_diff <- dover_sable_bhat_hist %>%
-  left_join(dover_sable_bhat_fut) %>%
+  left_join(dover_sable_bhat_fut,by = c("port_name", "esm", "sim")) %>%
   mutate(bhatd=bhat_fut-bhat_hist) %>%
   group_by(port_name,esm) %>%
   summarise(meandiff=mean(bhatd),
@@ -889,6 +892,7 @@ dover_sable_bhat_diff <- dover_sable_bhat_hist %>%
   mutate(lower=meandiff-sddiff,upper=meandiff+sddiff) %>%
   ungroup()
 
+# plot
 dover_sable_bhat_plot <- dover_sable_bhat_diff %>%
   mutate(ESM=toupper(esm)) %>%
   filter(port_name%in%c("Astoria","Fort Bragg")) %>%
@@ -916,11 +920,11 @@ cume_depth_all <- purrr::map(list(dover_ens_all,sable_ens_all,ss_ens_all,ls_ens_
 
 cume_depth_plt <- ggdraw()+
   draw_plot(cume_depth_all)+
-  draw_image(here('data','icons','dover1.png'),hjust=.27,vjust=-.2,scale=0.15)+
-  draw_image(here('data','icons','sablefish.png'),hjust=-.26,vjust=-.2,scale=0.15)+
-  draw_image(here('data','icons','shortspine.png'),hjust=.24,vjust=.3,scale=0.15)+
-  draw_image(here('data','icons','longspinet.png'),hjust=-.26,vjust=.3,scale=0.15)
-# cume_depth_plt
+  draw_image(here('data','icons','dover_sil.png'),hjust=.27,vjust=-.2,scale=0.15)+
+  draw_image(here('data','icons','sablefish_sil.png'),hjust=-.26,vjust=-.2,scale=0.15)+
+  draw_image(here('data','icons','shortspine_sil.png'),hjust=.24,vjust=.3,scale=0.15)+
+  draw_image(here('data','icons','longspine_sil.png'),hjust=-.26,vjust=.3,scale=0.15)
+cume_depth_plt
 
 ggsave(here('model output','four_spp_cume_depth_sims.png'),cume_depth_plt,w=8,h=6)
 ```
@@ -1031,6 +1035,7 @@ dover_sable_reldens_all <- allspp_reldens %>%
         panel.background = element_rect(color='black'))
 
 dover_sable_reldens_all
+ggsave(here::here('model output','dover_sable_cpue_all_footprints.png'),dover_sable_reldens_all,h=7,w=10)
 ```
 
 ```{r}
@@ -1045,6 +1050,7 @@ dover_sable_bhat_plot_all_fps <- dover_sable_bhat_diff %>%
   theme(panel.background = element_rect(color='black'),
         strip.text = element_text(size=10))
 dover_sable_bhat_plot_all_fps
+ggsave(here::here('model output','dover_sable_bhat_all_footprints.png'),dover_sable_bhat_plot_all_fps,h=7,w=10)
 ```
 
 ## Commercial Importance of DTS
@@ -1061,6 +1067,7 @@ ggsave(here('model output','fig_dts_landings_prop.png'),dts_prop_landings_plot,h
 ```
 
 ```{r}
+# landings
 landings_plot <- v %>% 
   group_by(Year,lab)%>% 
   filter(Year>1979) %>% 
@@ -1068,7 +1075,7 @@ landings_plot <- v %>%
   ggplot(aes(Year,tot_dollars/1e6,color=lab))+geom_line(size=1.5)+
   labs(x="Year",y="Landings (Million $)",color="")+
   # scale_x_continuous(breaks=seq(2010,2020,by=2))+
-  scale_color_manual(values=pal)+
+  scale_color_manual(values=pal4)+
   scale_x_continuous(expand=c(0,2))+
   theme(legend.position = c(0.13,0.75),
         legend.text = element_text(size=10),
@@ -1076,6 +1083,9 @@ landings_plot <- v %>%
         axis.title = element_text(size=12),
         panel.border = element_rect(color='black',fill=NA))
 landings_plot
+ggsave(here('model output','fig_dts_landings_rev.png'),landings_plot,h=5,w=6)
+
+#price per pound
 ppp_plot <- v %>% 
   group_by(Year,lab)%>% 
   filter(Year>1979) %>% 
@@ -1085,13 +1095,14 @@ ppp_plot <- v %>%
   ggplot(aes(Year,ppp,color=lab))+geom_line(size=1.5)+
   labs(x="Year",y="Price Per Pound ($)",color="")+
   # scale_x_continuous(breaks=seq(2010,2020,by=2))+
-  scale_color_manual(values=pal)+
+  scale_color_manual(values=pal4)+
   scale_x_continuous(expand=c(0,2))+
   theme(legend.position = c(0.15,0.8),
         axis.text = element_text(size=10),
         axis.title = element_text(size=12),
         panel.border = element_rect(color='black',fill=NA))
 ppp_plot
+ggsave(here('model output','fig_dts_price.png'),ppp_plot,h=5,w=6)
 
 lbs_plot <- v %>% 
   group_by(Year,lab)%>% 
@@ -1102,7 +1113,7 @@ lbs_plot <- v %>%
   ggplot(aes(Year,tot_lbs/1000,color=lab))+geom_line(size=1.5)+
   labs(x="Year",y="Thousand Pounds",color="")+
   # scale_x_continuous(breaks=seq(2010,2020,by=2))+
-  scale_color_manual(values=pal)+
+  scale_color_manual(values=pal4)+
   scale_x_continuous(expand=c(0,2))+
   theme(legend.position = c(0.85,0.8),
         axis.text = element_text(size=10),
