@@ -1791,7 +1791,7 @@ ensemble_predictions &lt;- function(model_df,gcm=&#39;hadl&#39;,nsims=0){
   sd_t &lt;- sd(original_model_data$mean_temp_roms_30,na.rm=T)
   mean_oxy &lt;- mean(original_model_data$mean_oxygen_roms_30,na.rm=T)
   sd_oxy &lt;- sd(original_model_data$mean_oxygen_roms_30,na.rm=T)
-  
+ 
   # create a new tibble with the projected data for the chosen gcm
   newdata &lt;- roms %&gt;% 
     left_join(roms_ll,by=c(&quot;lat&quot;,&quot;lon&quot;)) %&gt;% 
@@ -1880,7 +1880,7 @@ ensemble_predictions &lt;- function(model_df,gcm=&#39;hadl&#39;,nsims=0){
   newdata &lt;- roms %&gt;% 
     left_join(roms_ll,by=c(&quot;lat&quot;,&quot;lon&quot;)) %&gt;% 
     drop_na() %&gt;% 
-    dplyr::select(year,lat,lon,latitude,longitude,prop_hard_mixed,depth_m,contains(paste0(&quot;30d_&quot;,gcm)))
+    dplyr::select(year,lat,lon,latitude,longitude,depth_m,contains(paste0(&quot;30d_&quot;,gcm)))
   
   temperature &lt;- newdata %&gt;% dplyr::select(contains(&#39;bt&#39;)) %&gt;% 
     set_names(&#39;temperature&#39;) %&gt;% 

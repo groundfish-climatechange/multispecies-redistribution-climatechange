@@ -69,8 +69,7 @@ roms <- read_rds(here('data','roms_for_sdm_projection.rds'))
 roms_area <- read_rds(here('data','roms_cell_area_km2.rds'))
 
 # Latitude/longitude key for CCROMS grid cell centers
-roms_ll <- read_rds(here::here('data','roms_latlon_key_topleft_start.rds')) %>% 
-  mutate(roms_cell=row_number())
+roms_ll <- read_rds(here::here('data','roms_latlon_depth_key_topleft_start.rds'))
 
 # Distance from each CCROMS cell to the coastline
 roms_dist_to_coast <- read_rds(here::here('data','roms_distance_to_shore.rds'))
@@ -184,23 +183,23 @@ sable_ens_ipsl <- ensemble_predictions(sable_models,gcm='ipsl',nsims=100)
 ss_ens_ipsl <- ensemble_predictions(ss_models,gcm="ipsl",nsims=100)
 ls_ens_ipsl <- ensemble_predictions(ls_models,gcm='ipsl',nsims=100)
 
-# write_rds(dover_ens_ipsl,here('model output','dover_ensemble_preds_ipsl.rds'))
-# write_rds(sable_ens_ipsl,here('model output','sable_ensemble_preds_ipsl.rds'))
-# write_rds(ss_ens_ipsl,here('model output','ss_ensemble_preds_ipsl.rds'))
-# write_rds(ls_ens_ipsl,here('model output','ls_ensemble_preds_ipsl.rds'))
+write_rds(dover_ens_ipsl,here('model output','dover_ensemble_preds_ipsl.rds'))
+write_rds(sable_ens_ipsl,here('model output','sable_ensemble_preds_ipsl.rds'))
+write_rds(ss_ens_ipsl,here('model output','ss_ensemble_preds_ipsl.rds'))
+write_rds(ls_ens_ipsl,here('model output','ls_ensemble_preds_ipsl.rds'))
 ```
 
 GFDL
 ```{r,eval=F}
 dover_ens_gfdl <- ensemble_predictions(dover_models,gcm='gfdl',nsims=100)
-sable_ens_gfdl <- ensemble_predictions(sable_models,gcm='gfdl',nsims=100)
-ss_ens_gfdl <- ensemble_predictions(ss_models,gcm="gfdl",nsims=100)
-ls_ens_gfdl <- ensemble_predictions(ls_models,gcm='gfdl',nsims=100)
-
 write_rds(dover_ens_gfdl,here('model output','dover_ensemble_preds_gfdl.rds'))
+sable_ens_gfdl <- ensemble_predictions(sable_models,gcm='gfdl',nsims=100)
 write_rds(sable_ens_gfdl,here('model output','sable_ensemble_preds_gfdl.rds'))
+ss_ens_gfdl <- ensemble_predictions(ss_models,gcm="gfdl",nsims=100)
 write_rds(ss_ens_gfdl,here('model output','ss_ensemble_preds_gfdl.rds'))
+ls_ens_gfdl <- ensemble_predictions(ls_models,gcm='gfdl',nsims=100)
 write_rds(ls_ens_gfdl,here('model output','ls_ensemble_preds_gfdl.rds'))
+
 ```
 
 Hadley
