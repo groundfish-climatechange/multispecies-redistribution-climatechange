@@ -1700,10 +1700,32 @@ div.tocify {
 <div id="model-fit-statistics-and-visualization" class="section level1">
 <h1>Model Fit Statistics and Visualization</h1>
 <p>Functions to visualize and save model fits.</p>
+<div id="deviance-explained" class="section level2">
+<h2>Deviance Explained</h2>
+<pre class="r"><code>calc_deviance_ensemble &lt;- function(model_df){
+  fit &lt;- model_df$model[[1]]
+  dat &lt;- fit$data
+  null &lt;- sdmTMB(cpue_kg_km2 ~ 1,
+                 spatial=&quot;off&quot;,
+                 mesh = fit$mesh,
+                 data = fit$data)
+  null_dev &lt;- -2 * as.numeric(logLik(null))
+  
+  log_lik &lt;- unlist(lapply(model_df$model, logLik))
+  
+  resid_dev &lt;- -2 * log_lik
+  
+  dev_explained &lt;- 100 * (null_dev - resid_dev)/null_dev
+  
+  tibble(null_dev=null_dev,resid_dev=resid_dev,dev_explained=dev_explained)
+}</code></pre>
+</div>
 <div id="model-ensemble-table" class="section level2">
 <h2>Model Ensemble Table</h2>
 <pre class="r"><code>report_model_ensemble &lt;- function(model_df){
   weights_table &lt;- model_df %&gt;% dplyr::select(-model,-model_cv,-model_num)
+  dev &lt;- calc_deviance_ensemble(model_df)$dev_explained
+  weights_table$DevianceExplained=dev
   convergence &lt;- purrr::map_int(model_df$model,function(m){m$model$convergence})
   weights_table$Convergence &lt;- convergence
   range_params &lt;- purrr::map_dbl(model_df$model,function(m){
@@ -1729,6 +1751,31 @@ div.tocify {
     qq
   })
   cowplot::plot_grid(plotlist=qqp,nrow=1,labels=c(1:4))
+}</code></pre>
+</div>
+<div id="weighted-spatial-residuals" class="section level2">
+<h2>Weighted Spatial Residuals</h2>
+<pre class="r"><code>map_weighted_residuals&lt;-function(model_df){
+  resids &lt;- purrr::map2(model_df$weight,model_df$model,function(x,y){
+    x*residuals(y)
+  }) %&gt;% reduce(`+`)
+  
+  dat &lt;- model_df$model[[1]]$data %&gt;% 
+    mutate(w.resid=c(resids)) %&gt;% 
+    dplyr::select(latitude,longitude,year,w.resid) %&gt;% 
+    filter(year %in% c(2003:2010))
+  
+  dat_sf &lt;- st_as_sf(dat,coords=c(&quot;longitude&quot;,&quot;latitude&quot;),crs=&quot;+proj=utm +zone=10 +datum=WGS84 +units=km&quot;)
+  
+  bbox &lt;- st_bbox(dat_sf)
+  ggplot()+
+    geom_sf(data=coast,col=NA,fill=&quot;gray50&quot;)+
+    geom_sf(data=dat_sf,size=0.5,aes(col=w.resid))+
+    scale_color_gradient2()+
+    coord_sf(datum=NA)+
+    xlim(bbox[1],bbox[3])+ylim(bbox[2],bbox[4])+
+    labs(x=&quot;&quot;,y=&quot;&quot;,color=&quot;Weighted\nResidual&quot;)+
+    theme(legend.position = c(0.7,0.6))
 }</code></pre>
 </div>
 <div id="visualize-species-environmental-niches" class="section level2">

@@ -241,11 +241,35 @@ model_species <- function(spp,data){
 
 Functions to visualize and save model fits.
 
+## Deviance Explained
+
+```{r}
+calc_deviance_ensemble <- function(model_df){
+  fit <- model_df$model[[1]]
+  dat <- fit$data
+  null <- sdmTMB(cpue_kg_km2 ~ 1,
+                 spatial="off",
+                 mesh = fit$mesh,
+                 data = fit$data)
+  null_dev <- -2 * as.numeric(logLik(null))
+  
+  log_lik <- unlist(lapply(model_df$model, logLik))
+  
+  resid_dev <- -2 * log_lik
+  
+  dev_explained <- 100 * (null_dev - resid_dev)/null_dev
+  
+  tibble(null_dev=null_dev,resid_dev=resid_dev,dev_explained=dev_explained)
+}
+```
+
 ## Model Ensemble Table
 
 ```{r}
 report_model_ensemble <- function(model_df){
   weights_table <- model_df %>% dplyr::select(-model,-model_cv,-model_num)
+  dev <- calc_deviance_ensemble(model_df)$dev_explained
+  weights_table$DevianceExplained=dev
   convergence <- purrr::map_int(model_df$model,function(m){m$model$convergence})
   weights_table$Convergence <- convergence
   range_params <- purrr::map_dbl(model_df$model,function(m){
@@ -273,6 +297,33 @@ make_qq_plots <- function(model_df){
     qq
   })
   cowplot::plot_grid(plotlist=qqp,nrow=1,labels=c(1:4))
+}
+```
+
+## Weighted Spatial Residuals
+
+```{r}
+map_weighted_residuals<-function(model_df){
+  resids <- purrr::map2(model_df$weight,model_df$model,function(x,y){
+    x*residuals(y)
+  }) %>% reduce(`+`)
+  
+  dat <- model_df$model[[1]]$data %>% 
+    mutate(w.resid=c(resids)) %>% 
+    dplyr::select(latitude,longitude,year,w.resid) %>% 
+    filter(year %in% c(2003:2010))
+  
+  dat_sf <- st_as_sf(dat,coords=c("longitude","latitude"),crs="+proj=utm +zone=10 +datum=WGS84 +units=km")
+  
+  bbox <- st_bbox(dat_sf)
+  ggplot()+
+    geom_sf(data=coast,col=NA,fill="gray50")+
+    geom_sf(data=dat_sf,size=0.5,aes(col=w.resid))+
+    scale_color_gradient2()+
+    coord_sf(datum=NA)+
+    xlim(bbox[1],bbox[3])+ylim(bbox[2],bbox[4])+
+    labs(x="",y="",color="Weighted\nResidual")+
+    theme(legend.position = c(0.7,0.6))
 }
 ```
 

@@ -400,6 +400,16 @@ ls_ind_all<-read_rds(here('model output','ls_abun_indices.rds'))
 
 ## Model Fit Visualization
 
+### Deviance Explained
+Using the fitted models and a intercept-only null model for each species, calculate the percent deviance explained to add to the reported model statistics
+```{r}
+dover_dev <- calc_deviance_ensemble(dover_models)
+sable_dev <- calc_deviance_ensemble(sable_models)
+ss_dev <- calc_deviance_ensemble(ss_models)
+ls_dev <- calc_deviance_ensemble(ls_models)
+```
+
+
 ### Model Tables
 
 Model fit tables for the Appendix
@@ -431,6 +441,21 @@ ggsave(here('model output','sable_qq.png'),sableqq,h=3,w=8)
 ggsave(here('model output','ss_qq.png'),ssqq,h=3,w=8)
 ggsave(here('model output','ls_qq.png'),lsqq,h=3,w=8)
 ```
+
+### Weighted Spatial Residuals
+
+```{r}
+dover_resids <- map_weighted_residuals(dover_models)
+sable_resids <- map_weighted_residuals(sable_models)
+ss_resids <- map_weighted_residuals(ss_models)
+ls_resids <- map_weighted_residuals(ls_models)
+
+ggsave(here('model output','dover_resid.png'),dover_resids,h=6,w=4)
+ggsave(here('model output','sable_resid.png'),sable_resids,h=6,w=4)
+ggsave(here('model output','ss_resid.png'),ss_resids,h=6,w=4)
+ggsave(here('model output','ls_resid.png'),ls_resids,h=6,w=4)
+```
+
 
 ### Environmental Niches
 
